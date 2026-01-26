@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLOv9 Aerial Human Detection</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        .upload-section {
+            background: #f8f9fa;
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .upload-section:hover {
+            border-color: #764ba2;
+            background: #f0f0f0;
+        }
+
+        .upload-section.dragover {
+            border-color: #764ba2;
+            background: #e8e8ff;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+
+        input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-input-label {
+            display: inline-block;
+            padding: 15px 30px;
+            background: #667eea;
+            color: white;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1.1em;
+            transition: all 0.3s ease;
+        }
+
+        .file-input-label:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .file-name {
+            margin-top: 15px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .button-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .process-btn {
+            padding: 15px 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.2em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .process-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .process-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loader {
+            display: none;
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .loader.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loader-text {
+            color: #667eea;
+            font-size: 1.1em;
+            font-weight: 500;
+        }
+
+        .video-container {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .video-container.active {
+            display: block;
+        }
+
+        .video-wrapper {
+            background: #000;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            max-height: 600px;
+        }
+
+        .video-title {
+            text-align: center;
+            color: #333;
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+
+        .error-message {
+            display: none;
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #c33;
+        }
+
+        .error-message.active {
+            display: block;
+        }
+
+        .success-message {
+            display: none;
+            background: #efe;
+            color: #3c3;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #3c3;
+        }
+
+        .success-message.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚁 YOLOv9 Aerial Human Detection</h1>
+        <p class="subtitle">Upload an aerial video to detect humans using YOLOv9</p>
+
+        <div class="upload-section" id="uploadSection">
+            <div class="file-input-wrapper">
+                <input type="file" id="videoInput" accept="video/*" />
+                <label for="videoInput" class="file-input-label">📁 Choose Video File</label>
+            </div>
+            <div class="file-name" id="fileName">No file selected</div>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+        <div class="success-message" id="successMessage"></div>
+
+        <div class="button-container">
+            <button class="process-btn" id="processBtn" disabled>🔍 Detect Humans</button>
+        </div>
+
+        <div class="loader" id="loader">
+            <div class="spinner"></div>
+            <div class="loader-text">Processing video... This may take a few minutes</div>
+        </div>
+
+        <div class="video-container" id="videoContainer">
+            <div class="video-title">Processed Video with Human Detections</div>
+            <div class="video-wrapper">
+                <video id="outputVideo" controls preload="metadata" playsinline>
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const videoInput = document.getElementById('videoInput');
+        const fileName = document.getElementById('fileName');
+        const processBtn = document.getElementById('processBtn');
+        const loader = document.getElementById('loader');
+        const videoContainer = document.getElementById('videoContainer');
+        const outputVideo = document.getElementById('outputVideo');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const uploadSection = document.getElementById('uploadSection');
+
+        let selectedFile = null;
+
+        // File input change
+        videoInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                selectedFile = file;
+                fileName.textContent = `Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
+                processBtn.disabled = false;
+                hideMessages();
+            }
+        });
+
+        // Drag and drop
+        uploadSection.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('video/')) {
+                videoInput.files = e.dataTransfer.files;
+                selectedFile = file;
+                fileName.textContent = `Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
+                processBtn.disabled = false;
+                hideMessages();
+            }
+        });
+
+        // Process button click
+        processBtn.addEventListener('click', async function() {
+            if (!selectedFile) {
+                showError('Please select a video file first');
+                return;
+            }
+
+            // Reset UI
+            hideMessages();
+            videoContainer.classList.remove('active');
+            loader.classList.add('active');
+            processBtn.disabled = true;
+
+            // Create form data
+            const formData = new FormData();
+            formData.append('video', selectedFile);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    // Show success message
+                    showSuccess(`Video processed successfully! ${data.frames_processed} frames analyzed.`);
+                    
+                    // Load and display video
+                    const videoUrl = `/output/${data.output_file}?t=${Date.now()}`; // Add timestamp to prevent caching
+                    outputVideo.src = videoUrl;
+                    videoContainer.classList.add('active');
+                    
+                    // Add error handler for video loading
+                    outputVideo.onerror = function() {
+                        showError('Failed to load video. The video file may be corrupted or in an unsupported format.');
+                    };
+                    
+                    // Add load handler
+                    outputVideo.onloadeddata = function() {
+                        console.log('Video loaded successfully');
+                    };
+                    
+                    // Try to load the video
+                    outputVideo.load();
+                    
+                    // Scroll to video
+                    setTimeout(() => {
+                        outputVideo.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }, 100);
+                } else {
+                    showError(data.error || 'Error processing video');
+                    processBtn.disabled = false;
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+                processBtn.disabled = false;
+            } finally {
+                loader.classList.remove('active');
+            }
+        });
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('active');
+            successMessage.classList.remove('active');
+        }
+
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successMessage.classList.add('active');
+            errorMessage.classList.remove('active');
+        }
+
+        function hideMessages() {
+            errorMessage.classList.remove('active');
+            successMessage.classList.remove('active');
+        }
+    </script>
+</body>
+</html>
