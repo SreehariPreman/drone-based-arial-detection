@@ -213,12 +213,140 @@
         .success-message.active {
             display: block;
         }
+
+        .divider {
+            text-align: center;
+            margin: 40px 0;
+            color: #999;
+            font-size: 1.2em;
+            position: relative;
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 40%;
+            height: 1px;
+            background: #ddd;
+        }
+
+        .divider::before {
+            left: 0;
+        }
+
+        .divider::after {
+            right: 0;
+        }
+
+        .stream-section {
+            background: #f8f9fa;
+            border: 2px solid #667eea;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .stream-input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .stream-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+
+        .stream-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .port-input {
+            width: 100px;
+        }
+
+        .stream-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .stream-btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .stream-btn.start {
+            background: #28a745;
+            color: white;
+        }
+
+        .stream-btn.start:hover:not(:disabled) {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+
+        .stream-btn.stop {
+            background: #dc3545;
+            color: white;
+        }
+
+        .stream-btn.stop:hover:not(:disabled) {
+            background: #c82333;
+            transform: translateY(-2px);
+        }
+
+        .stream-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .live-stream-container {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .live-stream-container.active {
+            display: block;
+        }
+
+        .live-video-wrapper {
+            background: #000;
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        #liveStream {
+            max-width: 100%;
+            max-height: 600px;
+            border-radius: 10px;
+        }
+
+        .stream-info {
+            text-align: center;
+            color: #666;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🚁 YOLOv9 Aerial Human Detection</h1>
-        <p class="subtitle">Upload an aerial video to detect humans using YOLOv9</p>
+        <p class="subtitle">Upload an aerial video or stream live from your mobile device</p>
 
         <div class="upload-section" id="uploadSection">
             <div class="file-input-wrapper">
@@ -246,6 +374,34 @@
                 <video id="outputVideo" controls preload="metadata" playsinline>
                     Your browser does not support the video tag.
                 </video>
+            </div>
+        </div>
+
+        <div class="divider">OR</div>
+
+        <div class="stream-section">
+            <h2 style="text-align: center; color: #333; margin-bottom: 20px;">📱 Live Stream from Mobile Device</h2>
+            <p style="text-align: center; color: #666; margin-bottom: 20px;">
+                Connect your phone using DroidCam and enter the IP address shown in the app
+            </p>
+            
+            <div class="stream-input-group">
+                <input type="text" id="ipAddress" class="stream-input" placeholder="Enter IP address (e.g., 192.168.1.100)" />
+                <input type="text" id="portNumber" class="stream-input port-input" placeholder="Port" value="4747" />
+            </div>
+
+            <div class="stream-buttons">
+                <button class="stream-btn start" id="startStreamBtn">▶️ Start Live Stream</button>
+                <button class="stream-btn stop" id="stopStreamBtn" disabled>⏹️ Stop Stream</button>
+            </div>
+
+            <div class="stream-info" id="streamInfo"></div>
+        </div>
+
+        <div class="live-stream-container" id="liveStreamContainer">
+            <div class="video-title">Live Stream with Human Detection</div>
+            <div class="live-video-wrapper">
+                <img id="liveStream" src="" alt="Live stream will appear here" />
             </div>
         </div>
     </div>
@@ -377,6 +533,121 @@
             errorMessage.classList.remove('active');
             successMessage.classList.remove('active');
         }
+
+        // Live Streaming functionality
+        const ipAddressInput = document.getElementById('ipAddress');
+        const portNumberInput = document.getElementById('portNumber');
+        const startStreamBtn = document.getElementById('startStreamBtn');
+        const stopStreamBtn = document.getElementById('stopStreamBtn');
+        const liveStreamContainer = document.getElementById('liveStreamContainer');
+        const liveStream = document.getElementById('liveStream');
+        const streamInfo = document.getElementById('streamInfo');
+
+        let streamInterval = null;
+
+        // Check stream status on page load
+        async function checkStreamStatus() {
+            try {
+                const response = await fetch('/stream/status');
+                const data = await response.json();
+                if (data.active) {
+                    startStreamBtn.disabled = true;
+                    stopStreamBtn.disabled = false;
+                    liveStreamContainer.classList.add('active');
+                    liveStream.src = '/video_feed?' + Date.now();
+                    streamInfo.textContent = `Streaming from: ${data.stream_url}`;
+                }
+            } catch (error) {
+                console.error('Error checking stream status:', error);
+            }
+        }
+
+        // Start streaming
+        startStreamBtn.addEventListener('click', async function() {
+            const ipAddress = ipAddressInput.value.trim();
+            const port = portNumberInput.value.trim() || '4747';
+
+            if (!ipAddress) {
+                showError('Please enter an IP address');
+                return;
+            }
+
+            // Validate IP address format (basic check)
+            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (!ipPattern.test(ipAddress)) {
+                showError('Please enter a valid IP address (e.g., 192.168.1.100)');
+                return;
+            }
+
+            hideMessages();
+            startStreamBtn.disabled = true;
+            streamInfo.textContent = 'Connecting to camera...';
+
+            try {
+                const response = await fetch('/stream/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ip_address: ipAddress,
+                        port: port
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showSuccess('Live stream started successfully!');
+                    startStreamBtn.disabled = true;
+                    stopStreamBtn.disabled = false;
+                    liveStreamContainer.classList.add('active');
+                    
+                    // Start displaying the stream
+                    liveStream.src = '/video_feed?' + Date.now();
+                    streamInfo.textContent = `Streaming from: ${data.stream_url}`;
+                } else {
+                    showError(data.error || 'Failed to start stream');
+                    startStreamBtn.disabled = false;
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+                startStreamBtn.disabled = false;
+            }
+        });
+
+        // Stop streaming
+        stopStreamBtn.addEventListener('click', async function() {
+            try {
+                const response = await fetch('/stream/stop', {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showSuccess('Stream stopped');
+                    startStreamBtn.disabled = false;
+                    stopStreamBtn.disabled = true;
+                    liveStreamContainer.classList.remove('active');
+                    liveStream.src = '';
+                    streamInfo.textContent = '';
+                } else {
+                    showError(data.error || 'Failed to stop stream');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            }
+        });
+
+        // Handle stream image errors
+        liveStream.addEventListener('error', function() {
+            console.error('Error loading stream image');
+            streamInfo.textContent = 'Error loading stream. Check connection.';
+        });
+
+        // Check stream status on page load
+        checkStreamStatus();
     </script>
 </body>
 </html>

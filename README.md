@@ -11,6 +11,8 @@ A web-based application for detecting humans in aerial videos using YOLOv9 pre-t
 - 📤 Video upload with drag & drop support
 - ⏳ Real-time processing status with loader
 - 🎥 Video playback of processed results
+- 📱 **Live streaming from mobile devices** (DroidCam support)
+- 🔴 **Real-time human detection** on live video streams
 
 ## Requirements
 
@@ -76,6 +78,31 @@ A web-based application for detecting humans in aerial videos using YOLOv9 pre-t
    - Click "Detect Humans" button
    - Wait for processing to complete (a loader will be shown)
    - The processed video with bounding boxes will be displayed automatically
+
+## Live Streaming from Mobile Device
+
+You can also stream live video from your mobile device using DroidCam:
+
+1. **Install DroidCam on your phone**
+   - Download DroidCam from Google Play Store or App Store
+   - Install the DroidCam client on your computer (optional, for USB connection)
+
+2. **Connect your phone to the same WiFi network** as your computer
+
+3. **Start DroidCam on your phone**
+   - Open the DroidCam app
+   - Note the IP address and port shown in the app (default port is 4747)
+
+4. **Start live streaming in the web interface**
+   - Enter the IP address from DroidCam (e.g., `192.168.1.100`)
+   - Enter the port (default: `4747`)
+   - Click "Start Live Stream"
+   - The live video feed with human detection will appear in real-time
+
+5. **Stop streaming**
+   - Click "Stop Stream" when done
+
+**Note**: Make sure both devices are on the same WiFi network for the connection to work.
 
 ## How It Works
 

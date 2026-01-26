@@ -1,10 +1,12 @@
 import os
 import cv2
 import numpy as np
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, Response
 from werkzeug.utils import secure_filename
 import torch
 import torch.serialization
+import threading
+import time
 
 # Fix for PyTorch 2.6+ compatibility with YOLOv9
 # Patch torch.load to allow loading YOLO models
@@ -30,6 +32,9 @@ from ultralytics import YOLO
 import tempfile
 import shutil
 import subprocess
+import requests
+from io import BytesIO
+from PIL import Image
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -43,6 +48,14 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
 # Load YOLOv9 model (will download automatically if not present)
 model = None
+
+# Live streaming variables
+streaming_active = False
+streaming_thread = None
+stream_cap = None
+current_stream_url = None
+frame_buffer = None
+frame_lock = threading.Lock()
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -183,6 +196,230 @@ def process_video(input_path, output_path):
     
     return frame_count
 
+def process_frame_for_streaming(frame):
+    """Process a single frame for live streaming"""
+    model = load_model()
+    
+    # Run YOLOv9 detection
+    results = model(frame, verbose=False)
+    
+    # Process results and draw bounding boxes only for 'person' class (class 0)
+    annotated_frame = frame.copy()
+    
+    for result in results:
+        boxes = result.boxes
+        for box in boxes:
+            # Get class ID and confidence
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            
+            # Only draw boxes for 'person' class (class 0 in COCO dataset)
+            if cls == 0 and conf > 0.25:  # Confidence threshold
+                # Get bounding box coordinates
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                
+                # Draw bounding box
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                
+                # Draw label with confidence
+                label = f'Person {conf:.2f}'
+                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(annotated_frame, (x1, y1 - label_size[1] - 10), 
+                            (x1 + label_size[0], y1), (0, 255, 0), -1)
+                cv2.putText(annotated_frame, label, (x1, y1 - 5), 
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+    
+    return annotated_frame
+
+def generate_frames():
+    """Generator function for MJPEG streaming"""
+    global frame_buffer, frame_lock
+    
+    while streaming_active:
+        with frame_lock:
+            if frame_buffer is not None:
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame_buffer, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ret:
+                    frame_bytes = buffer.tobytes()
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        time.sleep(0.033)  # ~30 FPS
+
+def streaming_worker_mjpeg(url):
+    """Worker thread for MJPEG streaming using requests library"""
+    global streaming_active, frame_buffer, frame_lock, current_stream_url
+    
+    try:
+        response = requests.get(url, stream=True, timeout=10)
+        if response.status_code != 200:
+            print(f"HTTP error: {response.status_code}")
+            return False
+        
+        bytes_data = b''
+        for chunk in response.iter_content(chunk_size=8192):
+            if not streaming_active:
+                break
+            
+            bytes_data += chunk
+            
+            # Look for JPEG frame markers
+            while b'\xff\xd8' in bytes_data:
+                start = bytes_data.find(b'\xff\xd8')
+                # Find the end of this JPEG frame
+                end_marker = bytes_data.find(b'\xff\xd9', start)
+                
+                if end_marker != -1:
+                    # Complete JPEG frame found
+                    jpeg_data = bytes_data[start:end_marker + 2]
+                    bytes_data = bytes_data[end_marker + 2:]  # Remove processed data
+                    
+                    try:
+                        # Convert JPEG bytes to OpenCV image
+                        img = Image.open(BytesIO(jpeg_data))
+                        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                        
+                        # Process frame with YOLOv9
+                        processed_frame = process_frame_for_streaming(frame)
+                        
+                        # Update frame buffer
+                        with frame_lock:
+                            frame_buffer = processed_frame
+                    except Exception as e:
+                        print(f"Error processing MJPEG frame: {e}")
+                        continue
+                else:
+                    # Incomplete frame, wait for more data
+                    break
+                    
+    except requests.exceptions.RequestException as e:
+        print(f"Request error: {e}")
+        return False
+    except Exception as e:
+        print(f"Error in MJPEG stream: {e}")
+        return False
+    
+    return True
+
+def streaming_worker(ip_address, port):
+    """Worker thread for processing live stream"""
+    global streaming_active, stream_cap, frame_buffer, frame_lock, current_stream_url
+    
+    # Try different URL formats for DroidCam
+    # DroidCam supports multiple formats - try /video first as it's the MJPEG endpoint
+    url_formats = [
+        f"http://{ip_address}:{port}/video",  # Standard HTTP MJPEG (most reliable)
+        f"http://{ip_address}:{port}/",  # Root URL (may redirect or serve HTML)
+        f"http://{ip_address}:{port}/mjpegfeed?640x480",  # Alternative MJPEG format
+        f"http://{ip_address}:{port}/mjpegfeed",  # Simple MJPEG feed
+    ]
+    
+    # Try OpenCV VideoCapture first
+    cap = None
+    connected_url = None
+    use_requests = False
+    
+    print("Attempting connection with OpenCV VideoCapture...")
+    for url in url_formats:
+        try:
+            print(f"Trying OpenCV: {url}")
+            # Try different backends
+            for backend in [cv2.CAP_ANY, cv2.CAP_FFMPEG]:
+                try:
+                    cap = cv2.VideoCapture(url, backend)
+                    if cap.isOpened():
+                        # Give it a moment to connect
+                        time.sleep(0.5)
+                        ret, test_frame = cap.read()
+                        if ret and test_frame is not None and test_frame.size > 0:
+                            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                            cap.set(cv2.CAP_PROP_FPS, 30)
+                            print(f"✓ Successfully connected with OpenCV: {url}")
+                            connected_url = url
+                            current_stream_url = url
+                            break
+                        else:
+                            cap.release()
+                            cap = None
+                except:
+                    if cap:
+                        cap.release()
+                        cap = None
+                    continue
+            
+            if cap and cap.isOpened():
+                break
+        except Exception as e:
+            print(f"✗ OpenCV failed for {url}: {e}")
+            if cap:
+                try:
+                    cap.release()
+                except:
+                    pass
+                cap = None
+            continue
+    
+    # If OpenCV failed, try requests library for MJPEG
+    if cap is None or not cap.isOpened():
+        print("\nOpenCV failed, trying requests library for MJPEG stream...")
+        for url in url_formats:
+            print(f"Trying requests MJPEG: {url}")
+            # Test if URL is accessible
+            try:
+                test_response = requests.get(url, stream=True, timeout=3)
+                if test_response.status_code == 200:
+                    print(f"✓ URL is accessible, starting MJPEG stream: {url}")
+                    connected_url = url
+                    current_stream_url = url
+                    use_requests = True
+                    break
+            except Exception as e:
+                print(f"✗ Cannot access {url}: {e}")
+                continue
+    
+    if not use_requests and (cap is None or not cap.isOpened()):
+        print("\n✗ Failed to connect to stream. Please check:")
+        print("1. DroidCam is running on your phone")
+        print("2. Both devices are on the same WiFi network")
+        print("3. IP address and port are correct")
+        print("4. Try accessing the URL in a browser: http://" + ip_address + ":" + port + "/video")
+        streaming_active = False
+        return
+    
+    stream_cap = cap if not use_requests else "requests"
+    
+    try:
+        if use_requests:
+            # Use requests library for MJPEG streaming
+            streaming_worker_mjpeg(connected_url)
+        else:
+            # Use OpenCV VideoCapture
+            while streaming_active:
+                ret, frame = cap.read()
+                if not ret:
+                    print("Failed to read frame from stream")
+                    time.sleep(0.1)
+                    continue
+                
+                # Process frame with YOLOv9
+                processed_frame = process_frame_for_streaming(frame)
+                
+                # Update frame buffer
+                with frame_lock:
+                    frame_buffer = processed_frame
+                
+                time.sleep(0.033)  # ~30 FPS
+    except Exception as e:
+        print(f"Error in streaming worker: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if cap and not use_requests:
+            cap.release()
+        streaming_active = False
+        stream_cap = None
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -231,6 +468,87 @@ def get_output_video(filename):
         return response
     else:
         return jsonify({'error': 'File not found'}), 404
+
+@app.route('/stream/start', methods=['POST'])
+def start_stream():
+    """Start live streaming from IP camera"""
+    global streaming_active, streaming_thread, current_stream_url
+    
+    if streaming_active:
+        return jsonify({'error': 'Streaming is already active'}), 400
+    
+    data = request.get_json()
+    if not data or 'ip_address' not in data:
+        return jsonify({'error': 'IP address is required'}), 400
+    
+    ip_address = data['ip_address'].strip()
+    port = data.get('port', '4747')  # DroidCam default port
+    
+    # Remove http:// or https:// if user included it
+    if ip_address.startswith('http://') or ip_address.startswith('https://'):
+        # Extract IP from URL if user provided full URL
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(ip_address)
+            ip_address = parsed.hostname or ip_address.replace('http://', '').replace('https://', '').split('/')[0]
+            if parsed.port:
+                port = str(parsed.port)
+        except:
+            ip_address = ip_address.replace('http://', '').replace('https://', '').split('/')[0]
+    
+    # Construct stream URL for display
+    stream_url = f"http://{ip_address}:{port}/video"
+    current_stream_url = stream_url
+    streaming_active = True
+    
+    # Start streaming thread with IP and port separately
+    streaming_thread = threading.Thread(target=streaming_worker, args=(ip_address, port), daemon=True)
+    streaming_thread.start()
+    
+    # Wait a bit to see if connection succeeds
+    time.sleep(2)
+    
+    if not streaming_active:
+        return jsonify({'error': 'Failed to connect to camera. Check IP address and ensure DroidCam is running.'}), 500
+    
+    return jsonify({
+        'success': True,
+        'message': 'Streaming started',
+        'stream_url': stream_url
+    })
+
+@app.route('/stream/stop', methods=['POST'])
+def stop_stream():
+    """Stop live streaming"""
+    global streaming_active, stream_cap
+    
+    if not streaming_active:
+        return jsonify({'error': 'No active stream'}), 400
+    
+    streaming_active = False
+    
+    if stream_cap:
+        stream_cap.release()
+        stream_cap = None
+    
+    return jsonify({'success': True, 'message': 'Streaming stopped'})
+
+@app.route('/stream/status', methods=['GET'])
+def stream_status():
+    """Get streaming status"""
+    return jsonify({
+        'active': streaming_active,
+        'stream_url': current_stream_url if streaming_active else None
+    })
+
+@app.route('/video_feed')
+def video_feed():
+    """MJPEG streaming endpoint"""
+    if not streaming_active:
+        return jsonify({'error': 'Streaming is not active'}), 400
+    
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
     print("Loading YOLOv9 model...")
