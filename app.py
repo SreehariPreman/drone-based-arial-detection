@@ -48,6 +48,9 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
 # Load YOLOv9 model (will download automatically if not present)
 model = None
+# Damage/building detection model (trained custom model - best.pt)
+damage_model = None
+DAMAGE_MODEL_PATH = os.environ.get('DAMAGE_MODEL_PATH', 'best.pt')
 
 # Live streaming variables
 streaming_active = False
@@ -74,6 +77,58 @@ def load_model():
             model = YOLO('yolov8n.pt')  # YOLOv8 nano - fast and accurate
     return model
 
+def load_damage_model():
+    """Load custom YOLO model for damaged_building detection (best.pt)."""
+    global damage_model
+    if damage_model is None and os.path.isfile(DAMAGE_MODEL_PATH):
+        try:
+            damage_model = YOLO(DAMAGE_MODEL_PATH)
+            print(f"Damage model loaded from {DAMAGE_MODEL_PATH}")
+        except Exception as e:
+            print(f"Warning: Could not load damage model from {DAMAGE_MODEL_PATH}: {e}")
+    return damage_model
+
+def run_detection_and_draw(frame, conf_threshold=0.25):
+    """Run person + damage detection and draw boxes on frame. Returns annotated frame."""
+    person_model = load_model()
+    annotated = frame.copy()
+
+    # 1) Person detection (class 0 = person in COCO)
+    person_results = person_model(frame, verbose=False)
+    for result in person_results:
+        for box in result.boxes:
+            cls = int(box.cls[0])
+            conf = float(box.conf[0])
+            if cls == 0 and conf >= conf_threshold:
+                x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                color = (0, 255, 0)  # green
+                label = f'Person {conf:.2f}'
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(annotated, (x1, y1 - label_size[1] - 10),
+                              (x1 + label_size[0], y1), color, -1)
+                cv2.putText(annotated, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
+    # 2) Damage detection (custom model: class 0 = damaged_building)
+    dm = load_damage_model()
+    if dm is not None:
+        damage_results = dm(frame, verbose=False, conf=conf_threshold)
+        for result in damage_results:
+            for box in result.boxes:
+                conf = float(box.conf[0])
+                if conf < conf_threshold:
+                    continue
+                x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                color = (0, 0, 255)  # red for damage
+                label = f'Damaged building {conf:.2f}'
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                cv2.rectangle(annotated, (x1, y1 - label_size[1] - 10),
+                              (x1 + label_size[0], y1), color, -1)
+                cv2.putText(annotated, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+    return annotated
+
 def reencode_video_for_browser(input_path, output_path):
     """Re-encode video using ffmpeg for browser compatibility"""
     try:
@@ -93,32 +148,33 @@ def reencode_video_for_browser(input_path, output_path):
         return False
 
 def process_video(input_path, output_path):
-    """Process video to detect humans and draw bounding boxes"""
-    model = load_model()
-    
+    """Process video to detect humans and damaged buildings, draw bounding boxes"""
+    load_model()
+    load_damage_model()
+
     # Open video
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise ValueError("Error opening video file")
-    
+
     # Get video properties
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
+
     # Use temporary file for initial encoding
     temp_output = output_path.replace('.mp4', '_temp.mp4')
-    
+
     # Try browser-compatible codecs in order of preference
     codecs_to_try = [
         ('avc1', 'H.264/AVC'),  # Best browser support
         ('H264', 'H.264'),
         ('mp4v', 'MPEG-4'),     # Fallback
     ]
-    
+
     out = None
     codec_used = None
-    
+
     for fourcc_str, codec_name in codecs_to_try:
         try:
             fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
@@ -130,56 +186,31 @@ def process_video(input_path, output_path):
             if out:
                 out.release()
             continue
-    
+
     if out is None or not out.isOpened():
         raise ValueError("Failed to initialize video writer with any codec")
-    
+
     frame_count = 0
-    
+    print("[Detection] Starting video processing — detecting humans & damaged buildings...")
+
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
-            
-            # Run YOLOv9 detection
-            results = model(frame, verbose=False)
-            
-            # Process results and draw bounding boxes only for 'person' class (class 0)
-            annotated_frame = frame.copy()
-            
-            for result in results:
-                boxes = result.boxes
-                for box in boxes:
-                    # Get class ID and confidence
-                    cls = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    
-                    # Only draw boxes for 'person' class (class 0 in COCO dataset)
-                    if cls == 0 and conf > 0.25:  # Confidence threshold
-                        # Get bounding box coordinates
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                        
-                        # Draw bounding box
-                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        
-                        # Draw label with confidence
-                        label = f'Person {conf:.2f}'
-                        label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                        cv2.rectangle(annotated_frame, (x1, y1 - label_size[1] - 10), 
-                                    (x1 + label_size[0], y1), (0, 255, 0), -1)
-                        cv2.putText(annotated_frame, label, (x1, y1 - 5), 
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-            
-            # Write frame to output video
+
+            annotated_frame = run_detection_and_draw(frame, conf_threshold=0.25)
             out.write(annotated_frame)
             frame_count += 1
-            
+            if frame_count % 30 == 0 or frame_count == 1:
+                print(f"  [Detection] Frame {frame_count}: detecting...")
+
     finally:
         cap.release()
         out.release()
     
+    print(f"[Detection] Finished — {frame_count} frames processed.")
+
     # Re-encode with ffmpeg for better browser compatibility if available
     if reencode_video_for_browser(temp_output, output_path):
         # Remove temp file if re-encoding succeeded
@@ -197,40 +228,8 @@ def process_video(input_path, output_path):
     return frame_count
 
 def process_frame_for_streaming(frame):
-    """Process a single frame for live streaming"""
-    model = load_model()
-    
-    # Run YOLOv9 detection
-    results = model(frame, verbose=False)
-    
-    # Process results and draw bounding boxes only for 'person' class (class 0)
-    annotated_frame = frame.copy()
-    
-    for result in results:
-        boxes = result.boxes
-        for box in boxes:
-            # Get class ID and confidence
-            cls = int(box.cls[0])
-            conf = float(box.conf[0])
-            
-            # Only draw boxes for 'person' class (class 0 in COCO dataset)
-            if cls == 0 and conf > 0.25:  # Confidence threshold
-                # Get bounding box coordinates
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                
-                # Draw bounding box
-                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                
-                # Draw label with confidence
-                label = f'Person {conf:.2f}'
-                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(annotated_frame, (x1, y1 - label_size[1] - 10), 
-                            (x1 + label_size[0], y1), (0, 255, 0), -1)
-                cv2.putText(annotated_frame, label, (x1, y1 - 5), 
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-    
-    return annotated_frame
+    """Process a single frame for live streaming (person + damaged building)."""
+    return run_detection_and_draw(frame, conf_threshold=0.25)
 
 def generate_frames():
     """Generator function for MJPEG streaming"""
@@ -258,6 +257,8 @@ def streaming_worker_mjpeg(url):
             return False
         
         bytes_data = b''
+        mjpeg_frame_count = 0
+        print("[Detection] Live stream (MJPEG): detecting humans & damaged buildings...")
         for chunk in response.iter_content(chunk_size=8192):
             if not streaming_active:
                 break
@@ -282,6 +283,9 @@ def streaming_worker_mjpeg(url):
                         
                         # Process frame with YOLOv9
                         processed_frame = process_frame_for_streaming(frame)
+                        mjpeg_frame_count += 1
+                        if mjpeg_frame_count % 90 == 0 or mjpeg_frame_count == 1:
+                            print(f"  [Detection] Live stream frame {mjpeg_frame_count}: detecting...")
                         
                         # Update frame buffer
                         with frame_lock:
@@ -388,13 +392,15 @@ def streaming_worker(ip_address, port):
         return
     
     stream_cap = cap if not use_requests else "requests"
-    
+    print("[Detection] Live stream: detecting humans & damaged buildings...")
+
     try:
         if use_requests:
             # Use requests library for MJPEG streaming
             streaming_worker_mjpeg(connected_url)
         else:
             # Use OpenCV VideoCapture
+            stream_frame_count = 0
             while streaming_active:
                 ret, frame = cap.read()
                 if not ret:
@@ -404,6 +410,9 @@ def streaming_worker(ip_address, port):
                 
                 # Process frame with YOLOv9
                 processed_frame = process_frame_for_streaming(frame)
+                stream_frame_count += 1
+                if stream_frame_count % 90 == 0 or stream_frame_count == 1:
+                    print(f"  [Detection] Live stream frame {stream_frame_count}: detecting...")
                 
                 # Update frame buffer
                 with frame_lock:
@@ -444,6 +453,7 @@ def upload_video():
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         
         try:
+            print(f"[Detection] Video uploaded: {filename} — starting detection...")
             # Process video
             frame_count = process_video(input_path, output_path)
             
@@ -551,7 +561,8 @@ def video_feed():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    print("Loading YOLOv9 model...")
+    print("Loading YOLO models...")
     load_model()
-    print("Model loaded successfully!")
+    load_damage_model()
+    print("Models loaded successfully!")
     app.run(debug=True, host='0.0.0.0', port=5000)

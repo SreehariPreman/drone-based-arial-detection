@@ -1,11 +1,12 @@
 # YOLOv9 Aerial Human Detection System
 
-A web-based application for detecting humans in aerial videos using YOLOv9 pre-trained model. The system processes uploaded videos, detects only humans/persons, draws bounding boxes around them, and displays the processed video.
+A web-based application for detecting humans and damaged buildings in aerial videos using YOLOv9 and a custom YOLO damage model. The system processes uploaded videos, detects persons and damaged buildings, draws bounding boxes, and displays the processed video.
 
 ## Features
 
 - 🚁 Aerial video processing with YOLOv9
-- 👤 Human/person detection only (filters out other objects)
+- 👤 Human/person detection (COCO person class)
+- 🏚️ Damaged building detection (custom trained model, optional)
 - 📦 Bounding box visualization with confidence scores
 - 🌐 Modern Flask web interface
 - 📤 Video upload with drag & drop support
@@ -43,7 +44,10 @@ A web-based application for detecting humans in aerial videos using YOLOv9 pre-t
    pip install -r requirements.txt
    ```
 
-4. **Install FFmpeg (Optional but Recommended)**
+4. **Add damage detection model (optional)**  
+   To also detect damaged buildings, place your trained `best.pt` in the project root (or set `DAMAGE_MODEL_PATH` to its path). If the file is missing, only person detection runs.
+
+5. **Install FFmpeg (Optional but Recommended)**
    FFmpeg ensures better browser compatibility for video playback. If not installed, the system will use OpenCV's codecs.
    
    **macOS:**
@@ -129,9 +133,10 @@ drone-based-arial-detection/
 
 ## Technical Details
 
-- **Model**: YOLOv9 (yolov9c.pt) via Ultralytics
-- **Detection Class**: Person (class 0 from COCO dataset)
-- **Confidence Threshold**: 0.25
+- **Person model**: YOLOv9 (yolov9c.pt) or YOLOv8 (yolov8n.pt) via Ultralytics — detects person (COCO class 0).
+- **Damage model**: Custom YOLO `best.pt` (trained with `damage.yaml`, class `damaged_building`) — loaded from project root or `DAMAGE_MODEL_PATH`.
+- **Confidence threshold**: 0.25 for both models.
+- **Visualization**: Green boxes = person, red boxes = damaged building.
 - **Video Codec**: MP4V
 - **Backend**: Flask
 - **Frontend**: HTML5, CSS3, JavaScript
