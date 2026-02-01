@@ -1,0 +1,6 @@
+# Raspberry Pi stream server — run on the Pi (same WiFi as laptop)
+# Install: pip install -r requirements.txt
+
+opencv-python-headless>=4.5.0   # USB camera or encode for Pi Camera
+# Optional: Pi Camera Module (Pi 5 / Bullseye+)
+# picamera2  # install via: sudo apt install -y python3-picamera2

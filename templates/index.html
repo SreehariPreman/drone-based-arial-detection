@@ -154,6 +154,41 @@
                     <div class="text-center text-gray-600 mt-4 text-sm" id="streamInfo"></div>
                 </div>
 
+                <!-- Raspberry Pi Stream Section -->
+                <div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-2xl p-8 mb-8">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-2 flex items-center gap-3">
+                        <svg class="w-7 h-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                        </svg>
+                        Live Stream from Raspberry Pi
+                    </h2>
+                    <p class="text-gray-600 mb-6 mt-2">
+                        Run the stream script on your Pi (same WiFi as laptop), then enter the Pi’s IP address. See <code class="bg-amber-100 px-1 rounded">README-RASPBERRY-PI.md</code> for setup.
+                    </p>
+                    
+                    <div class="flex flex-col sm:flex-row gap-4 mb-6">
+                        <input type="text" id="ipAddressPi" class="flex-1 px-5 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all duration-300 text-gray-800 placeholder-gray-400" placeholder="Raspberry Pi IP (e.g., 192.168.1.50)" />
+                        <input type="text" id="portNumberPi" class="w-full sm:w-32 px-5 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all duration-300 text-gray-800 placeholder-gray-400" placeholder="Port" value="8080" />
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                        <button class="inline-flex items-center justify-center gap-2 px-8 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none" id="startPiStreamBtn">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"></path>
+                            </svg>
+                            Start Pi Stream
+                        </button>
+                        <button class="inline-flex items-center justify-center gap-2 px-8 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none" id="stopPiStreamBtn" disabled>
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path>
+                            </svg>
+                            Stop Stream
+                        </button>
+                    </div>
+
+                    <div class="text-center text-gray-600 mt-4 text-sm" id="streamInfoPi"></div>
+                </div>
+
                 <!-- Live Stream Container -->
                 <div class="hidden mt-10" id="liveStreamContainer">
                     <h3 class="text-2xl font-bold text-gray-800 mb-6 text-center flex items-center justify-center gap-3">
@@ -317,18 +352,43 @@
 
         let streamInterval = null;
 
+        const startPiStreamBtn = document.getElementById('startPiStreamBtn');
+        const stopPiStreamBtn = document.getElementById('stopPiStreamBtn');
+        const ipAddressPiInput = document.getElementById('ipAddressPi');
+        const portNumberPiInput = document.getElementById('portNumberPi');
+        const streamInfoPi = document.getElementById('streamInfoPi');
+
+        function setStreamActive(active) {
+            startStreamBtn.disabled = active;
+            startPiStreamBtn.disabled = active;
+            stopStreamBtn.disabled = !active;
+            stopPiStreamBtn.disabled = !active;
+            if (active) {
+                liveStreamContainer.classList.remove('hidden');
+                liveStream.src = '/video_feed?' + Date.now();
+                const msg = `Streaming from: ${currentStreamUrl || 'camera'}`;
+                streamInfo.textContent = msg;
+                streamInfo.className = 'text-center text-emerald-600 mt-4 text-sm font-medium';
+                streamInfoPi.textContent = msg;
+                streamInfoPi.className = 'text-center text-amber-600 mt-4 text-sm font-medium';
+            } else {
+                liveStreamContainer.classList.add('hidden');
+                liveStream.src = '';
+                streamInfo.textContent = '';
+                streamInfoPi.textContent = '';
+            }
+        }
+
+        let currentStreamUrl = null;
+
         // Check stream status on page load
         async function checkStreamStatus() {
             try {
                 const response = await fetch('/stream/status');
                 const data = await response.json();
                 if (data.active) {
-                    startStreamBtn.disabled = true;
-                    stopStreamBtn.disabled = false;
-                    liveStreamContainer.classList.remove('hidden');
-                    liveStream.src = '/video_feed?' + Date.now();
-                    streamInfo.textContent = `Streaming from: ${data.stream_url}`;
-                    streamInfo.className = 'text-center text-emerald-600 mt-4 text-sm font-medium';
+                    currentStreamUrl = data.stream_url;
+                    setStreamActive(true);
                 }
             } catch (error) {
                 console.error('Error checking stream status:', error);
@@ -373,14 +433,8 @@
 
                 if (response.ok && data.success) {
                     showSuccess('Live stream started successfully!');
-                    startStreamBtn.disabled = true;
-                    stopStreamBtn.disabled = false;
-                    liveStreamContainer.classList.remove('hidden');
-                    
-                    // Start displaying the stream
-                    liveStream.src = '/video_feed?' + Date.now();
-                    streamInfo.textContent = `Streaming from: ${data.stream_url}`;
-                    streamInfo.className = 'text-center text-emerald-600 mt-4 text-sm font-medium';
+                    currentStreamUrl = data.stream_url;
+                    setStreamActive(true);
                 } else {
                     showError(data.error || 'Failed to start stream');
                     startStreamBtn.disabled = false;
@@ -391,29 +445,72 @@
             }
         });
 
-        // Stop streaming
-        stopStreamBtn.addEventListener('click', async function() {
+        // Start Raspberry Pi streaming
+        startPiStreamBtn.addEventListener('click', async function() {
+            const ipAddress = ipAddressPiInput.value.trim();
+            const port = portNumberPiInput.value.trim() || '8080';
+
+            if (!ipAddress) {
+                showError('Please enter Raspberry Pi IP address');
+                return;
+            }
+
+            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (!ipPattern.test(ipAddress)) {
+                showError('Please enter a valid IP address (e.g., 192.168.1.50)');
+                return;
+            }
+
+            hideMessages();
+            startPiStreamBtn.disabled = true;
+            streamInfoPi.textContent = 'Connecting to Raspberry Pi...';
+            streamInfoPi.className = 'text-center text-gray-600 mt-4 text-sm';
+
             try {
-                const response = await fetch('/stream/stop', {
-                    method: 'POST'
+                const response = await fetch('/stream/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ip_address: ipAddress,
+                        port: port
+                    })
                 });
 
                 const data = await response.json();
 
                 if (response.ok && data.success) {
-                    showSuccess('Stream stopped');
-                    startStreamBtn.disabled = false;
-                    stopStreamBtn.disabled = true;
-                    liveStreamContainer.classList.add('hidden');
-                    liveStream.src = '';
-                    streamInfo.textContent = '';
+                    showSuccess('Raspberry Pi stream started!');
+                    currentStreamUrl = data.stream_url;
+                    setStreamActive(true);
                 } else {
-                    showError(data.error || 'Failed to stop stream');
+                    showError(data.error || 'Failed to connect to Pi. Is the stream script running on the Pi?');
+                    startPiStreamBtn.disabled = false;
                 }
             } catch (error) {
                 showError('Network error: ' + error.message);
+                startPiStreamBtn.disabled = false;
             }
         });
+
+        // Stop streaming (shared by DroidCam and Pi)
+        function stopStream() {
+            return fetch('/stream/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        showSuccess('Stream stopped');
+                        setStreamActive(false);
+                        currentStreamUrl = null;
+                    } else {
+                        showError(data.error || 'Failed to stop stream');
+                    }
+                })
+                .catch(err => showError('Network error: ' + err.message));
+        }
+        stopStreamBtn.addEventListener('click', stopStream);
+        stopPiStreamBtn.addEventListener('click', stopStream);
 
         // Handle stream image errors
         liveStream.addEventListener('error', function() {

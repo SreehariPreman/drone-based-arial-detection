@@ -313,10 +313,11 @@ def streaming_worker(ip_address, port):
     # Try different URL formats for DroidCam
     # DroidCam supports multiple formats - try /video first as it's the MJPEG endpoint
     url_formats = [
-        f"http://{ip_address}:{port}/video",  # Standard HTTP MJPEG (most reliable)
-        f"http://{ip_address}:{port}/",  # Root URL (may redirect or serve HTML)
-        f"http://{ip_address}:{port}/mjpegfeed?640x480",  # Alternative MJPEG format
-        f"http://{ip_address}:{port}/mjpegfeed",  # Simple MJPEG feed
+        f"http://{ip_address}:{port}/video",   # DroidCam / Pi stream (MJPEG)
+        f"http://{ip_address}:{port}/stream", # Pi stream alternative path
+        f"http://{ip_address}:{port}/",       # Root URL (may serve MJPEG)
+        f"http://{ip_address}:{port}/mjpegfeed?640x480",
+        f"http://{ip_address}:{port}/mjpegfeed",
     ]
     
     # Try OpenCV VideoCapture first

@@ -108,6 +108,15 @@ You can also stream live video from your mobile device using DroidCam:
 
 **Note**: Make sure both devices are on the same WiFi network for the connection to work.
 
+## Live Streaming from Raspberry Pi
+
+You can stream video from a **Raspberry Pi** (same WiFi as laptop) and run the same detection:
+
+1. **On the Pi:** Copy the `raspberry_pi` folder to the Pi, install dependencies, and run the stream server (see **[README-RASPBERRY-PI.md](README-RASPBERRY-PI.md)** for full setup).
+2. **On the laptop:** Open the app → **Live Stream from Raspberry Pi** → enter the Pi’s IP and port (default **8080**) → click **Start Pi Stream**.
+
+Detection (humans & damaged buildings) is the same as for uploads and mobile streaming. See **README-RASPBERRY-PI.md** for Pi setup, camera options, and troubleshooting.
+
 ## How It Works
 
 1. **Video Upload**: User uploads an aerial video file through the web interface
