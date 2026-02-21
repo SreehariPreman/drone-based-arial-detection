@@ -3,538 +3,104 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YOLOv9 Aerial Detection — Humans & Damaged Buildings</title>
+    <title>Drone Aerial View Tracking — Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    animation: {
-                        'spin-slow': 'spin 3s linear infinite',
-                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    fontFamily: { sans: ['DM Sans', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        slate: { 850: '#172033', 950: '#0c1222' },
+                        sky: { 950: '#0a1628' }
                     }
                 }
             }
         }
     </script>
     <style>
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-        .mode-btn.active[data-mode="upload"] { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.5); }
-        .mode-btn.active[data-mode="mobile"] { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.5); }
-        .mode-btn.active[data-mode="pi"] { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.5); }
-        .mode-panel { display: none; }
-        .mode-panel.active { display: block; }
+        .card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .card-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 40px -12px rgba(0,0,0,0.35); }
+        .grid-pattern { background-image: linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px); background-size: 48px 48px; }
     </style>
 </head>
-<body class="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900">
-    <!-- Background Pattern -->
-    <div class="fixed inset-0 opacity-10">
-        <div class="absolute inset-0" style="background-image: radial-gradient(circle at 2px 2px, white 1px, transparent 0); background-size: 40px 40px;"></div>
-    </div>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased">
+    <div class="fixed inset-0 grid-pattern pointer-events-none"></div>
 
-    <div class="relative z-10 min-h-screen py-8 px-4 sm:px-6 lg:px-8">
-        <div class="max-w-6xl mx-auto">
-            <!-- Header -->
-            <div class="text-center mb-12">
-                <div class="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl mb-6 shadow-2xl transform hover:scale-105 transition-transform duration-300">
-                    <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
-                    </svg>
+    <div class="relative z-10 min-h-screen flex flex-col">
+        <!-- Header -->
+        <header class="border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-sm">
+            <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-sky-500/20 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0h.5a2.5 2.5 0 0010.5-2.5v-1.585M12 12a4 4 0 01-4-4V8a2 2 0 012-2h.586"></path>
+                        </svg>
+                    </div>
+                    <span class="text-lg font-semibold text-white">Drone Aerial Tracking</span>
                 </div>
-                <h1 class="text-5xl font-bold text-white mb-4 bg-clip-text text-transparent bg-gradient-to-r from-white via-indigo-200 to-purple-200">
-                    Aerial Detection
-                </h1>
-                <p class="text-xl text-indigo-200 font-light">
-                    Humans & Damaged Buildings • Powered by YOLOv9
-                </p>
+            </div>
+        </header>
+
+        <!-- Main -->
+        <main class="flex-1 flex flex-col items-center justify-center px-4 py-12 sm:py-16">
+            <div class="text-center mb-12">
+                <h1 class="text-3xl sm:text-4xl font-bold text-white mb-3">Aerial View Tracking Dashboard</h1>
+                <p class="text-slate-400 text-lg max-w-xl mx-auto">Choose a source to start detecting humans and damaged buildings from drone footage.</p>
             </div>
 
-            <!-- Main Container -->
-            <div class="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 sm:p-10 lg:p-12 mb-8 border border-white/20">
-                <!-- Mode selector: choose input without scrolling -->
-                <p class="text-gray-600 font-medium mb-4 text-center">Choose video source</p>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                    <button type="button" class="mode-btn active flex flex-col items-center gap-2 p-6 rounded-2xl border-2 border-indigo-300 bg-gradient-to-br from-indigo-50 to-purple-50 text-indigo-800 font-semibold transition-all duration-300 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" data-mode="upload" id="modeBtnUpload">
-                        <svg class="w-10 h-10 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 w-full max-w-4xl">
+                <!-- Upload Video -->
+                <a href="/workspace?mode=upload" class="group block p-6 sm:p-8 rounded-2xl bg-slate-800/60 border border-slate-700/60 card-hover no-underline text-left">
+                    <div class="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center mb-4 group-hover:bg-indigo-500/30 transition-colors">
+                        <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                         </svg>
-                        Upload Video
-                    </button>
-                    <button type="button" class="mode-btn flex flex-col items-center gap-2 p-6 rounded-2xl border-2 border-gray-200 bg-gray-50 text-gray-700 font-semibold transition-all duration-300 hover:border-emerald-300 hover:from-emerald-50 hover:to-teal-50 hover:bg-gradient-to-br hover:text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500" data-mode="mobile" id="modeBtnMobile">
-                        <svg class="w-10 h-10 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    </div>
+                    <h2 class="text-xl font-semibold text-white mb-2">Upload Video</h2>
+                    <p class="text-slate-400 text-sm">Process recorded drone footage. Upload MP4, AVI, MOV and run detection.</p>
+                    <span class="inline-flex items-center gap-1.5 mt-4 text-indigo-400 text-sm font-medium group-hover:gap-2 transition-all">
+                        Open workspace
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                    </span>
+                </a>
+
+                <!-- Connect — Mobile (DroidCam) -->
+                <a href="/workspace?mode=mobile" class="group block p-6 sm:p-8 rounded-2xl bg-slate-800/60 border border-slate-700/60 card-hover no-underline text-left">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center mb-4 group-hover:bg-emerald-500/30 transition-colors">
+                        <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                         </svg>
-                        Mobile (DroidCam)
-                    </button>
-                    <button type="button" class="mode-btn flex flex-col items-center gap-2 p-6 rounded-2xl border-2 border-gray-200 bg-gray-50 text-gray-700 font-semibold transition-all duration-300 hover:border-amber-300 hover:from-amber-50 hover:to-orange-50 hover:bg-gradient-to-br hover:text-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500" data-mode="pi" id="modeBtnPi">
-                        <svg class="w-10 h-10 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    </div>
+                    <h2 class="text-xl font-semibold text-white mb-2">Connect — Mobile</h2>
+                    <p class="text-slate-400 text-sm">Live stream from your phone via DroidCam. Same WiFi required.</p>
+                    <span class="inline-flex items-center gap-1.5 mt-4 text-emerald-400 text-sm font-medium group-hover:gap-2 transition-all">
+                        Open workspace
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                    </span>
+                </a>
+
+                <!-- Connect — Raspberry Pi -->
+                <a href="/workspace?mode=pi" class="group block p-6 sm:p-8 rounded-2xl bg-slate-800/60 border border-slate-700/60 card-hover no-underline text-left">
+                    <div class="w-12 h-12 rounded-xl bg-amber-500/20 flex items-center justify-center mb-4 group-hover:bg-amber-500/30 transition-colors">
+                        <svg class="w-6 h-6 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                         </svg>
-                        Raspberry Pi
-                    </button>
-                </div>
-
-                <!-- Messages -->
-                <div class="hidden bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded-lg mb-6 shadow-md" id="errorMessage"></div>
-                <div class="hidden bg-green-50 border-l-4 border-green-500 text-green-700 p-4 rounded-lg mb-6 shadow-md" id="successMessage"></div>
-
-                <!-- Panel: Upload Video -->
-                <div class="mode-panel active mt-2" id="panelUpload">
-                    <div class="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-dashed border-indigo-300 rounded-2xl p-10 text-center transition-all duration-300 hover:border-indigo-400 hover:shadow-lg" id="uploadSection">
-                        <div class="relative inline-block mb-4">
-                            <input type="file" id="videoInput" accept="video/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                            <label for="videoInput" class="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 cursor-pointer">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-                                </svg>
-                                Choose Video File
-                            </label>
-                        </div>
-                        <div class="text-gray-600 font-medium" id="fileName">No file selected</div>
-                        <p class="text-sm text-gray-500 mt-2">Drag and drop or click to browse • MP4, AVI, MOV, etc.</p>
                     </div>
-                    <div class="text-center mt-6">
-                        <button class="inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white font-bold text-lg rounded-xl shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none" id="processBtn" disabled>
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                            </svg>
-                            Detect Humans & Damaged Buildings
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Panel: Mobile (DroidCam) -->
-                <div class="mode-panel mt-2" id="panelMobile">
-                    <div class="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-2xl p-8">
-                        <p class="text-gray-600 mb-4">Connect your phone with DroidCam on the same WiFi, then enter the IP and port shown in the app.</p>
-                        <div class="flex flex-col sm:flex-row gap-4 mb-4">
-                            <input type="text" id="ipAddress" class="flex-1 px-5 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-gray-800 placeholder-gray-400" placeholder="Phone IP (e.g. 192.168.1.100)" />
-                            <input type="text" id="portNumber" class="w-full sm:w-28 px-5 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-gray-800" placeholder="Port" value="4747" />
-                        </div>
-                        <div class="flex flex-wrap gap-3 justify-center">
-                            <button class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" id="startStreamBtn">
-                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"></path></svg>
-                                Start Live Stream
-                            </button>
-                            <button class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" id="stopStreamBtn" disabled>
-                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
-                                Stop Stream
-                            </button>
-                        </div>
-                        <div class="text-center text-gray-600 mt-3 text-sm" id="streamInfo"></div>
-                    </div>
-                </div>
-
-                <!-- Panel: Raspberry Pi -->
-                <div class="mode-panel mt-2" id="panelPi">
-                    <div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-2xl p-8">
-                        <p class="text-gray-600 mb-4">Run the stream script on your Pi (same WiFi). See <code class="bg-amber-100 px-1 rounded text-sm">README-RASPBERRY-PI.md</code> for setup.</p>
-                        <div class="flex flex-col sm:flex-row gap-4 mb-4">
-                            <input type="text" id="ipAddressPi" class="flex-1 px-5 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent text-gray-800 placeholder-gray-400" placeholder="Raspberry Pi IP (e.g. 192.168.1.50)" />
-                            <input type="text" id="portNumberPi" class="w-full sm:w-28 px-5 py-3 border-2 border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 text-gray-800" placeholder="Port" value="8080" />
-                        </div>
-                        <div class="flex flex-wrap gap-3 justify-center">
-                            <button class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" id="startPiStreamBtn">
-                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"></path></svg>
-                                Start Pi Stream
-                            </button>
-                            <button class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-500 to-pink-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed" id="stopPiStreamBtn" disabled>
-                                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
-                                Stop Stream
-                            </button>
-                        </div>
-                        <div class="text-center text-gray-600 mt-3 text-sm" id="streamInfoPi"></div>
-                    </div>
-                </div>
-
-                <!-- Loader (shared) -->
-                <div class="hidden text-center py-12 mt-8" id="loader">
-                    <div class="inline-block w-16 h-16 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-6"></div>
-                    <div class="text-indigo-600 font-semibold text-lg">Processing video... This may take a few minutes</div>
-                    <div class="mt-4 text-gray-500 text-sm">Detecting humans and damaged buildings</div>
-                </div>
-
-                <!-- Video result (shared) -->
-                <div class="hidden mt-8" id="videoContainer">
-                    <h3 class="text-xl font-bold text-gray-800 mb-4 text-center">Processed Video — Humans & Damaged Buildings</h3>
-                    <div class="bg-black rounded-2xl p-4 shadow-2xl">
-                        <video id="outputVideo" controls preload="metadata" playsinline class="w-full rounded-xl max-h-[600px]">
-                            Your browser does not support the video tag.
-                        </video>
-                    </div>
-                </div>
-
-                <!-- Live stream viewer (shared) -->
-                <div class="hidden mt-8" id="liveStreamContainer">
-                    <h3 class="text-xl font-bold text-gray-800 mb-4 text-center flex items-center justify-center gap-2">
-                        <span class="inline-flex w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
-                        Live Stream — Humans & Damaged Buildings
-                    </h3>
-                    <div class="bg-black rounded-2xl p-4 shadow-2xl text-center">
-                        <img id="liveStream" src="" alt="Live stream" class="max-w-full max-h-[600px] rounded-xl mx-auto" />
-                    </div>
-                </div>
+                    <h2 class="text-xl font-semibold text-white mb-2">Connect — Raspberry Pi</h2>
+                    <p class="text-slate-400 text-sm">Live stream from a Raspberry Pi camera. See README for setup.</p>
+                    <span class="inline-flex items-center gap-1.5 mt-4 text-amber-400 text-sm font-medium group-hover:gap-2 transition-all">
+                        Open workspace
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                    </span>
+                </a>
             </div>
 
-            <!-- Footer -->
-            <div class="text-center text-white/70 text-sm">
-                <p>Humans & damaged buildings • YOLOv9 • Flask & Tailwind CSS</p>
-            </div>
-        </div>
+            <p class="mt-10 text-slate-500 text-sm">YOLOv9 • Humans & damaged buildings detection</p>
+        </main>
     </div>
-
-    <script>
-        const videoInput = document.getElementById('videoInput');
-        const fileName = document.getElementById('fileName');
-        const processBtn = document.getElementById('processBtn');
-        const loader = document.getElementById('loader');
-        const videoContainer = document.getElementById('videoContainer');
-        const outputVideo = document.getElementById('outputVideo');
-        const errorMessage = document.getElementById('errorMessage');
-        const successMessage = document.getElementById('successMessage');
-        const uploadSection = document.getElementById('uploadSection');
-
-        let selectedFile = null;
-
-        // Mode selector: switch panel without scrolling
-        const modeBtns = document.querySelectorAll('.mode-btn');
-        const panels = document.querySelectorAll('.mode-panel');
-        const MODES = ['upload', 'mobile', 'pi'];
-        const panelIds = { upload: 'panelUpload', mobile: 'panelMobile', pi: 'panelPi' };
-
-        function setMode(mode) {
-            modeBtns.forEach(btn => {
-                const isActive = btn.getAttribute('data-mode') === mode;
-                btn.classList.toggle('active', isActive);
-                btn.classList.toggle('border-indigo-300', isActive && mode === 'upload');
-                btn.classList.toggle('bg-gradient-to-br', isActive);
-                btn.classList.toggle('from-indigo-50', isActive && mode === 'upload');
-                btn.classList.toggle('to-purple-50', isActive && mode === 'upload');
-                btn.classList.toggle('text-indigo-800', isActive && mode === 'upload');
-                btn.classList.toggle('border-emerald-300', isActive && mode === 'mobile');
-                btn.classList.toggle('from-emerald-50', isActive && mode === 'mobile');
-                btn.classList.toggle('to-teal-50', isActive && mode === 'mobile');
-                btn.classList.toggle('text-emerald-800', isActive && mode === 'mobile');
-                btn.classList.toggle('border-amber-300', isActive && mode === 'pi');
-                btn.classList.toggle('from-amber-50', isActive && mode === 'pi');
-                btn.classList.toggle('to-orange-50', isActive && mode === 'pi');
-                btn.classList.toggle('text-amber-800', isActive && mode === 'pi');
-                btn.classList.toggle('border-gray-200', !isActive);
-                btn.classList.toggle('bg-gray-50', !isActive);
-                btn.classList.toggle('text-gray-700', !isActive);
-            });
-            panels.forEach(panel => {
-                panel.classList.toggle('active', panel.id === panelIds[mode]);
-            });
-        }
-
-        modeBtns.forEach(btn => {
-            btn.addEventListener('click', () => setMode(btn.getAttribute('data-mode')));
-        });
-
-        // File input change
-        videoInput.addEventListener('change', function(e) {
-            const file = e.target.files[0];
-            if (file) {
-                selectedFile = file;
-                fileName.textContent = `Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
-                fileName.className = 'text-indigo-600 font-semibold';
-                processBtn.disabled = false;
-                hideMessages();
-            }
-        });
-
-        // Drag and drop
-        uploadSection.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            uploadSection.classList.remove('from-indigo-50', 'to-purple-50', 'border-indigo-300');
-            uploadSection.classList.add('from-indigo-100', 'to-purple-100', 'border-indigo-500', 'scale-105');
-        });
-
-        uploadSection.addEventListener('dragleave', function(e) {
-            e.preventDefault();
-            uploadSection.classList.remove('from-indigo-100', 'to-purple-100', 'border-indigo-500', 'scale-105');
-            uploadSection.classList.add('from-indigo-50', 'to-purple-50', 'border-indigo-300');
-        });
-
-        uploadSection.addEventListener('drop', function(e) {
-            e.preventDefault();
-            uploadSection.classList.remove('from-indigo-100', 'to-purple-100', 'border-indigo-500', 'scale-105');
-            uploadSection.classList.add('from-indigo-50', 'to-purple-50', 'border-indigo-300');
-            const file = e.dataTransfer.files[0];
-            if (file && file.type.startsWith('video/')) {
-                videoInput.files = e.dataTransfer.files;
-                selectedFile = file;
-                fileName.textContent = `Selected: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`;
-                fileName.className = 'text-indigo-600 font-semibold';
-                processBtn.disabled = false;
-                hideMessages();
-            }
-        });
-
-        // Process button click
-        processBtn.addEventListener('click', async function() {
-            if (!selectedFile) {
-                showError('Please select a video file first');
-                return;
-            }
-
-            // Reset UI
-            hideMessages();
-            videoContainer.classList.add('hidden');
-            loader.classList.remove('hidden');
-            processBtn.disabled = true;
-
-            // Create form data
-            const formData = new FormData();
-            formData.append('video', selectedFile);
-
-            try {
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (response.ok && data.success) {
-                    // Show success message
-                    showSuccess(`Video processed successfully! ${data.frames_processed} frames analyzed.`);
-                    
-                    // Load and display video
-                    const videoUrl = `/output/${data.output_file}?t=${Date.now()}`; // Add timestamp to prevent caching
-                    outputVideo.src = videoUrl;
-                    videoContainer.classList.remove('hidden');
-                    
-                    // Add error handler for video loading
-                    outputVideo.onerror = function() {
-                        showError('Failed to load video. The video file may be corrupted or in an unsupported format.');
-                    };
-                    
-                    // Add load handler
-                    outputVideo.onloadeddata = function() {
-                        console.log('Video loaded successfully');
-                    };
-                    
-                    // Try to load the video
-                    outputVideo.load();
-                    
-                    // Scroll to video
-                    setTimeout(() => {
-                        outputVideo.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                    }, 100);
-                } else {
-                    showError(data.error || 'Error processing video');
-                    processBtn.disabled = false;
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-                processBtn.disabled = false;
-            } finally {
-                loader.classList.add('hidden');
-            }
-        });
-
-        function showError(message) {
-            errorMessage.textContent = message;
-            errorMessage.classList.remove('hidden');
-            successMessage.classList.add('hidden');
-        }
-
-        function showSuccess(message) {
-            successMessage.textContent = message;
-            successMessage.classList.remove('hidden');
-            errorMessage.classList.add('hidden');
-        }
-
-        function hideMessages() {
-            errorMessage.classList.add('hidden');
-            successMessage.classList.add('hidden');
-        }
-
-        // Live Streaming functionality
-        const ipAddressInput = document.getElementById('ipAddress');
-        const portNumberInput = document.getElementById('portNumber');
-        const startStreamBtn = document.getElementById('startStreamBtn');
-        const stopStreamBtn = document.getElementById('stopStreamBtn');
-        const liveStreamContainer = document.getElementById('liveStreamContainer');
-        const liveStream = document.getElementById('liveStream');
-        const streamInfo = document.getElementById('streamInfo');
-
-        let streamInterval = null;
-
-        const startPiStreamBtn = document.getElementById('startPiStreamBtn');
-        const stopPiStreamBtn = document.getElementById('stopPiStreamBtn');
-        const ipAddressPiInput = document.getElementById('ipAddressPi');
-        const portNumberPiInput = document.getElementById('portNumberPi');
-        const streamInfoPi = document.getElementById('streamInfoPi');
-
-        function setStreamActive(active) {
-            startStreamBtn.disabled = active;
-            startPiStreamBtn.disabled = active;
-            stopStreamBtn.disabled = !active;
-            stopPiStreamBtn.disabled = !active;
-            if (active) {
-                liveStreamContainer.classList.remove('hidden');
-                liveStream.src = '/video_feed?' + Date.now();
-                const msg = `Streaming from: ${currentStreamUrl || 'camera'}`;
-                streamInfo.textContent = msg;
-                streamInfo.className = 'text-center text-emerald-600 mt-4 text-sm font-medium';
-                streamInfoPi.textContent = msg;
-                streamInfoPi.className = 'text-center text-amber-600 mt-4 text-sm font-medium';
-            } else {
-                liveStreamContainer.classList.add('hidden');
-                liveStream.src = '';
-                streamInfo.textContent = '';
-                streamInfoPi.textContent = '';
-            }
-        }
-
-        let currentStreamUrl = null;
-
-        // Check stream status on page load
-        async function checkStreamStatus() {
-            try {
-                const response = await fetch('/stream/status');
-                const data = await response.json();
-                if (data.active) {
-                    currentStreamUrl = data.stream_url;
-                    setStreamActive(true);
-                }
-            } catch (error) {
-                console.error('Error checking stream status:', error);
-            }
-        }
-
-        // Start streaming
-        startStreamBtn.addEventListener('click', async function() {
-            const ipAddress = ipAddressInput.value.trim();
-            const port = portNumberInput.value.trim() || '4747';
-
-            if (!ipAddress) {
-                showError('Please enter an IP address');
-                return;
-            }
-
-            // Validate IP address format (basic check)
-            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-            if (!ipPattern.test(ipAddress)) {
-                showError('Please enter a valid IP address (e.g., 192.168.1.100)');
-                return;
-            }
-
-            hideMessages();
-            startStreamBtn.disabled = true;
-            streamInfo.textContent = 'Connecting to camera...';
-            streamInfo.className = 'text-center text-gray-600 mt-4 text-sm';
-
-            try {
-                const response = await fetch('/stream/start', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        ip_address: ipAddress,
-                        port: port
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok && data.success) {
-                    showSuccess('Live stream started successfully!');
-                    currentStreamUrl = data.stream_url;
-                    setStreamActive(true);
-                } else {
-                    showError(data.error || 'Failed to start stream');
-                    startStreamBtn.disabled = false;
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-                startStreamBtn.disabled = false;
-            }
-        });
-
-        // Start Raspberry Pi streaming
-        startPiStreamBtn.addEventListener('click', async function() {
-            const ipAddress = ipAddressPiInput.value.trim();
-            const port = portNumberPiInput.value.trim() || '8080';
-
-            if (!ipAddress) {
-                showError('Please enter Raspberry Pi IP address');
-                return;
-            }
-
-            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-            if (!ipPattern.test(ipAddress)) {
-                showError('Please enter a valid IP address (e.g., 192.168.1.50)');
-                return;
-            }
-
-            hideMessages();
-            startPiStreamBtn.disabled = true;
-            streamInfoPi.textContent = 'Connecting to Raspberry Pi...';
-            streamInfoPi.className = 'text-center text-gray-600 mt-4 text-sm';
-
-            try {
-                const response = await fetch('/stream/start', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        ip_address: ipAddress,
-                        port: port
-                    })
-                });
-
-                const data = await response.json();
-
-                if (response.ok && data.success) {
-                    showSuccess('Raspberry Pi stream started!');
-                    currentStreamUrl = data.stream_url;
-                    setStreamActive(true);
-                } else {
-                    showError(data.error || 'Failed to connect to Pi. Is the stream script running on the Pi?');
-                    startPiStreamBtn.disabled = false;
-                }
-            } catch (error) {
-                showError('Network error: ' + error.message);
-                startPiStreamBtn.disabled = false;
-            }
-        });
-
-        // Stop streaming (shared by DroidCam and Pi)
-        function stopStream() {
-            return fetch('/stream/stop', { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        showSuccess('Stream stopped');
-                        setStreamActive(false);
-                        currentStreamUrl = null;
-                    } else {
-                        showError(data.error || 'Failed to stop stream');
-                    }
-                })
-                .catch(err => showError('Network error: ' + err.message));
-        }
-        stopStreamBtn.addEventListener('click', stopStream);
-        stopPiStreamBtn.addEventListener('click', stopStream);
-
-        // Handle stream image errors
-        liveStream.addEventListener('error', function() {
-            console.error('Error loading stream image');
-            streamInfo.textContent = 'Error loading stream. Check connection.';
-            streamInfo.className = 'text-center text-red-600 mt-4 text-sm font-medium';
-        });
-
-        // Check stream status on page load
-        checkStreamStatus();
-    </script>
 </body>
 </html>

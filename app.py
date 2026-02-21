@@ -434,6 +434,15 @@ def streaming_worker(ip_address, port):
 def index():
     return render_template('index.html')
 
+
+@app.route('/workspace')
+def workspace():
+    mode = request.args.get('mode', 'upload')
+    if mode not in ('upload', 'mobile', 'pi'):
+        mode = 'upload'
+    return render_template('workspace.html', mode=mode)
+
+
 @app.route('/upload', methods=['POST'])
 def upload_video():
     if 'video' not in request.files:

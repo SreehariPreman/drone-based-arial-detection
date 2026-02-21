@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workspace — Drone Aerial Tracking</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['DM Sans', 'system-ui', 'sans-serif'] },
+                    colors: { slate: { 850: '#172033', 950: '#0c1222' } }
+                }
+            }
+        }
+    </script>
+    <style>
+        .grid-pattern { background-image: linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px); background-size: 48px 48px; }
+        .sidebar-inner { height: calc(100vh - 4rem); }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased">
+    <div class="fixed inset-0 grid-pattern pointer-events-none"></div>
+
+    <div class="relative z-10 flex flex-col min-h-screen">
+        <!-- Top bar -->
+        <header class="flex-shrink-0 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-sm">
+            <div class="px-4 sm:px-6 py-3 flex items-center justify-between">
+                <div class="flex items-center gap-4">
+                    <a href="/" class="inline-flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                        Dashboard
+                    </a>
+                    <span class="text-slate-600">|</span>
+                    <span class="text-white font-medium">
+                        {% if mode == 'upload' %}Upload Video
+                        {% elif mode == 'mobile' %}Connect — Mobile
+                        {% else %}Connect — Raspberry Pi
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-slate-500" id="statusDot"></span>
+                    <span class="text-slate-400 text-sm" id="statusLabel">Idle</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Side panel — Tracking / Session info -->
+            <aside class="flex-shrink-0 w-64 lg:w-72 border-r border-slate-800/80 bg-slate-900/50 flex flex-col">
+                <div class="sidebar-inner overflow-y-auto flex flex-col">
+                    <div class="p-4 border-b border-slate-800/80">
+                        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Tracking & Session</h2>
+                    </div>
+                    <div class="p-4 space-y-4 flex-1">
+                        <div>
+                            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Source</p>
+                            <p class="text-slate-200 font-medium" id="sideSource">
+                                {% if mode == 'upload' %}Upload
+                                {% elif mode == 'mobile' %}Mobile (DroidCam)
+                                {% else %}Raspberry Pi
+                                {% endif %}
+                            </p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Status</p>
+                            <p class="text-slate-200" id="sideStatus">Idle</p>
+                        </div>
+                        <div id="sideVideoInfo" class="hidden">
+                            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Video</p>
+                            <p class="text-slate-200 break-all" id="sideFileName">—</p>
+                            <p class="text-slate-400 text-sm mt-1" id="sideFrames">—</p>
+                        </div>
+                        <div id="sideStreamInfo" class="hidden">
+                            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Stream</p>
+                            <p class="text-slate-400 text-sm break-all" id="sideStreamUrl">—</p>
+                        </div>
+                        <div id="sideDetectionInfo" class="hidden">
+                            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Detection</p>
+                            <p class="text-slate-200 text-sm">Humans & damaged buildings (YOLOv9)</p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main content -->
+            <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+                <div class="max-w-4xl mx-auto">
+                    <!-- Messages -->
+                    <div class="hidden bg-red-500/10 border border-red-500/30 text-red-300 p-4 rounded-xl mb-4" id="errorMessage"></div>
+                    <div class="hidden bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-4 rounded-xl mb-4" id="successMessage"></div>
+
+                    {% if mode == 'upload' %}
+                    <!-- Upload section -->
+                    <section class="mb-8">
+                        <h3 class="text-lg font-semibold text-white mb-4">Upload video file</h3>
+                        <div class="relative bg-slate-800/60 border border-slate-700/60 border-dashed rounded-2xl p-8 sm:p-10 text-center transition-colors hover:border-slate-600" id="uploadSection">
+                            <input type="file" id="videoInput" accept="video/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 rounded-2xl" />
+                            <div class="relative inline-block mb-4">
+                                <label for="videoInput" class="inline-flex items-center gap-3 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl cursor-pointer transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                                    Choose video file
+                                </label>
+                            </div>
+                            <p class="text-slate-400 text-sm" id="fileName">No file selected</p>
+                            <p class="text-slate-500 text-xs mt-1">MP4, AVI, MOV, MKV — max 500MB</p>
+                        </div>
+                        <div class="mt-6 flex justify-center">
+                            <button class="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors" id="processBtn" disabled>
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                Run detection
+                            </button>
+                        </div>
+                    </section>
+                    {% else %}
+                    <!-- Connect section (Mobile or Pi) -->
+                    <section class="mb-8">
+                        <h3 class="text-lg font-semibold text-white mb-4">
+                            {% if mode == 'mobile' %}Connect DroidCam (same WiFi)
+                            {% else %}Connect Raspberry Pi stream
+                            {% endif %}
+                        </h3>
+                        <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-6 sm:p-8">
+                            <p class="text-slate-400 text-sm mb-4">
+                                {% if mode == 'mobile' %}Enter the IP and port shown in the DroidCam app.
+                                {% else %}Enter your Pi IP and port. See README-RASPBERRY-PI.md for setup.
+                                {% endif %}
+                            </p>
+                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                                <input type="text" id="ipAddress" class="flex-1 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="IP address (e.g. 192.168.1.100)" />
+                                <input type="text" id="portNumber" class="w-full sm:w-24 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Port" value="{{ '4747' if mode == 'mobile' else '8080' }}" />
+                            </div>
+                            <div class="flex flex-wrap gap-3">
+                                <button class="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors" id="startStreamBtn">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"></path></svg>
+                                    Start stream
+                                </button>
+                                <button class="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors" id="stopStreamBtn" disabled>
+                                    Stop stream
+                                </button>
+                            </div>
+                            <p class="text-slate-500 text-sm mt-3" id="streamInfo"></p>
+                        </div>
+                    </section>
+                    {% endif %}
+
+                    <!-- Loader -->
+                    <div class="hidden text-center py-12" id="loader">
+                        <div class="inline-block w-12 h-12 border-2 border-slate-600 border-t-indigo-500 rounded-full animate-spin mb-4"></div>
+                        <p class="text-slate-400">Processing video…</p>
+                    </div>
+
+                    <!-- Processed video -->
+                    <div class="hidden mt-8" id="videoContainer">
+                        <h3 class="text-lg font-semibold text-white mb-3">Processed video</h3>
+                        <div class="bg-black rounded-xl overflow-hidden">
+                            <video id="outputVideo" controls preload="metadata" playsinline class="w-full max-h-[70vh]"></video>
+                        </div>
+                    </div>
+
+                    <!-- Live stream -->
+                    <div class="hidden mt-8" id="liveStreamContainer">
+                        <h3 class="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                            Live stream
+                        </h3>
+                        <div class="bg-black rounded-xl overflow-hidden text-center">
+                            <img id="liveStream" src="" alt="Live stream" class="max-w-full max-h-[70vh] mx-auto" />
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        const mode = '{{ mode }}';
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const statusDot = document.getElementById('statusDot');
+        const statusLabel = document.getElementById('statusLabel');
+        const sideStatus = document.getElementById('sideStatus');
+        const sideVideoInfo = document.getElementById('sideVideoInfo');
+        const sideFileName = document.getElementById('sideFileName');
+        const sideFrames = document.getElementById('sideFrames');
+        const sideStreamInfo = document.getElementById('sideStreamInfo');
+        const sideStreamUrl = document.getElementById('sideStreamUrl');
+        const sideDetectionInfo = document.getElementById('sideDetectionInfo');
+
+        function setStatus(s, label) {
+            statusLabel.textContent = label;
+            sideStatus.textContent = label;
+            statusDot.className = 'w-2 h-2 rounded-full ' + (s === 'live' ? 'bg-emerald-500 animate-pulse' : s === 'busy' ? 'bg-amber-500' : 'bg-slate-500');
+        }
+
+        function showError(msg) {
+            errorMessage.textContent = msg;
+            errorMessage.classList.remove('hidden');
+            successMessage.classList.add('hidden');
+        }
+        function showSuccess(msg) {
+            successMessage.textContent = msg;
+            successMessage.classList.remove('hidden');
+            errorMessage.classList.add('hidden');
+        }
+        function hideMessages() {
+            errorMessage.classList.add('hidden');
+            successMessage.classList.add('hidden');
+        }
+
+        {% if mode == 'upload' %}
+        const videoInput = document.getElementById('videoInput');
+        const fileName = document.getElementById('fileName');
+        const processBtn = document.getElementById('processBtn');
+        const loader = document.getElementById('loader');
+        const videoContainer = document.getElementById('videoContainer');
+        const outputVideo = document.getElementById('outputVideo');
+        const uploadSection = document.getElementById('uploadSection');
+        let selectedFile = null;
+
+        uploadSection.addEventListener('click', (e) => { if (e.target !== videoInput) videoInput.click(); });
+        videoInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                selectedFile = file;
+                fileName.textContent = file.name + ' (' + (file.size / (1024 * 1024)).toFixed(2) + ' MB)';
+                processBtn.disabled = false;
+                hideMessages();
+            }
+        });
+
+        uploadSection.addEventListener('dragover', (e) => { e.preventDefault(); uploadSection.classList.add('border-indigo-500/50'); });
+        uploadSection.addEventListener('dragleave', () => uploadSection.classList.remove('border-indigo-500/50'));
+        uploadSection.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadSection.classList.remove('border-indigo-500/50');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('video/')) {
+                videoInput.files = e.dataTransfer.files;
+                selectedFile = file;
+                fileName.textContent = file.name + ' (' + (file.size / (1024 * 1024)).toFixed(2) + ' MB)';
+                processBtn.disabled = false;
+                hideMessages();
+            }
+        });
+
+        processBtn.addEventListener('click', async function() {
+            if (!selectedFile) { showError('Please select a video file'); return; }
+            hideMessages();
+            videoContainer.classList.add('hidden');
+            loader.classList.remove('hidden');
+            processBtn.disabled = true;
+            setStatus('busy', 'Processing…');
+
+            const formData = new FormData();
+            formData.append('video', selectedFile);
+            try {
+                const response = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    showSuccess('Video processed. ' + data.frames_processed + ' frames analyzed.');
+                    outputVideo.src = '/output/' + data.output_file + '?t=' + Date.now();
+                    outputVideo.onerror = () => showError('Failed to load video.');
+                    videoContainer.classList.remove('hidden');
+                    sideVideoInfo.classList.remove('hidden');
+                    sideFileName.textContent = selectedFile.name;
+                    sideFrames.textContent = data.frames_processed + ' frames';
+                    sideDetectionInfo.classList.remove('hidden');
+                    setStatus('idle', 'Idle');
+                } else {
+                    showError(data.error || 'Error processing video');
+                    processBtn.disabled = false;
+                    setStatus('idle', 'Idle');
+                }
+            } catch (err) {
+                showError('Network error: ' + err.message);
+                processBtn.disabled = false;
+                setStatus('idle', 'Idle');
+            }
+            loader.classList.add('hidden');
+        });
+        {% else %}
+        const ipAddressInput = document.getElementById('ipAddress');
+        const portNumberInput = document.getElementById('portNumber');
+        const startStreamBtn = document.getElementById('startStreamBtn');
+        const stopStreamBtn = document.getElementById('stopStreamBtn');
+        const liveStreamContainer = document.getElementById('liveStreamContainer');
+        const liveStream = document.getElementById('liveStream');
+        const streamInfo = document.getElementById('streamInfo');
+        let currentStreamUrl = null;
+
+        function setStreamActive(active) {
+            startStreamBtn.disabled = active;
+            stopStreamBtn.disabled = !active;
+            if (active) {
+                liveStreamContainer.classList.remove('hidden');
+                liveStream.src = '/video_feed?' + Date.now();
+                streamInfo.textContent = 'Streaming: ' + (currentStreamUrl || 'camera');
+                sideStreamInfo.classList.remove('hidden');
+                sideStreamUrl.textContent = currentStreamUrl || '—';
+                sideDetectionInfo.classList.remove('hidden');
+                setStatus('live', 'Live');
+            } else {
+                liveStreamContainer.classList.add('hidden');
+                liveStream.src = '';
+                streamInfo.textContent = '';
+                sideStreamInfo.classList.add('hidden');
+                setStatus('idle', 'Idle');
+            }
+        }
+
+        async function checkStreamStatus() {
+            try {
+                const r = await fetch('/stream/status');
+                const d = await r.json();
+                if (d.active) {
+                    currentStreamUrl = d.stream_url;
+                    setStreamActive(true);
+                }
+            } catch (e) {}
+        }
+
+        startStreamBtn.addEventListener('click', async function() {
+            const ip = ipAddressInput.value.trim();
+            const port = portNumberInput.value.trim() || (mode === 'pi' ? '8080' : '4747');
+            if (!ip) { showError('Enter IP address'); return; }
+            if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) { showError('Invalid IP address'); return; }
+            hideMessages();
+            startStreamBtn.disabled = true;
+            streamInfo.textContent = 'Connecting…';
+            try {
+                const response = await fetch('/stream/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ip_address: ip, port: port })
+                });
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    showSuccess('Stream started');
+                    currentStreamUrl = data.stream_url;
+                    setStreamActive(true);
+                } else {
+                    showError(data.error || 'Failed to start stream');
+                    startStreamBtn.disabled = false;
+                }
+            } catch (err) {
+                showError('Network error: ' + err.message);
+                startStreamBtn.disabled = false;
+            }
+        });
+
+        stopStreamBtn.addEventListener('click', function() {
+            fetch('/stream/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(d => {
+                    if (d.success) {
+                        showSuccess('Stream stopped');
+                        setStreamActive(false);
+                        currentStreamUrl = null;
+                    } else showError(d.error || 'Failed to stop');
+                })
+                .catch(() => showError('Network error'));
+        });
+
+        liveStream.addEventListener('error', () => {
+            streamInfo.textContent = 'Error loading stream. Check connection.';
+            streamInfo.classList.add('text-red-400');
+        });
+
+        checkStreamStatus();
+        {% endif %}
+    </script>
+</body>
+</html>
