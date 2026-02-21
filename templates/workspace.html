@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workspace — Drone Aerial Tracking</title>
+    <title>Drone Workspace</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    {% if mode == 'pi' %}
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    {% endif %}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
@@ -21,10 +24,16 @@
     <style>
         .grid-pattern { background-image: linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px); background-size: 48px 48px; }
         .sidebar-inner { height: calc(100vh - 4rem); }
+        {% if mode == 'pi' %}
+        #piMainMap { width: 100%; height: 100%; min-height: 0; background: #0d1117; z-index: 0; }
+        .pi-map-overlay { position: absolute; inset: 0; z-index: 500; pointer-events: none; display: flex; flex-direction: column; overflow: auto; }
+        .pi-map-overlay > * { pointer-events: auto; }
+        .pi-panel { background: linear-gradient(135deg, rgba(15,23,42,0.97) 0%, rgba(6,12,24,0.98) 100%); border: 1px solid rgba(51,65,85,0.7); box-shadow: 0 0 40px rgba(0,0,0,0.5); }
+        {% endif %}
     </style>
 </head>
 <body class="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased">
-    <div class="fixed inset-0 grid-pattern pointer-events-none"></div>
+    {% if mode != 'pi' %}<div class="fixed inset-0 grid-pattern pointer-events-none"></div>{% endif %}
 
     <div class="relative z-10 flex flex-col min-h-screen">
         <!-- Top bar -->
@@ -33,19 +42,22 @@
                 <div class="flex items-center gap-4">
                     <a href="/" class="inline-flex items-center gap-2 text-slate-400 hover:text-white transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
-                        Dashboard
+                        Drone dashboard
                     </a>
                     <span class="text-slate-600">|</span>
                     <span class="text-white font-medium">
-                        {% if mode == 'upload' %}Upload Video
-                        {% elif mode == 'mobile' %}Connect — Mobile
-                        {% else %}Connect — Raspberry Pi
+                        {% if mode == 'upload' %}Upload video
+                        {% elif mode == 'mobile' %}Connect — mobile
+                        {% else %}Connect to drone
                         {% endif %}
                     </span>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-4">
                     <span class="w-2 h-2 rounded-full bg-slate-500" id="statusDot"></span>
                     <span class="text-slate-400 text-sm" id="statusLabel">Idle</span>
+                    {% if mode == 'pi' %}
+                    <span id="headerCoords" class="hidden text-amber-400/90 text-sm font-mono tabular-nums" aria-label="Drone coordinates">—</span>
+                    {% endif %}
                 </div>
             </div>
         </header>
@@ -55,7 +67,7 @@
             <aside class="flex-shrink-0 w-64 lg:w-72 border-r border-slate-800/80 bg-slate-900/50 flex flex-col">
                 <div class="sidebar-inner overflow-y-auto flex flex-col">
                     <div class="p-4 border-b border-slate-800/80">
-                        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Tracking & Session</h2>
+                        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Drone telemetry</h2>
                     </div>
                     <div class="p-4 space-y-4 flex-1">
                         <div>
@@ -63,7 +75,7 @@
                             <p class="text-slate-200 font-medium" id="sideSource">
                                 {% if mode == 'upload' %}Upload
                                 {% elif mode == 'mobile' %}Mobile (DroidCam)
-                                {% else %}Raspberry Pi
+                                {% else %}Drone
                                 {% endif %}
                             </p>
                         </div>
@@ -80,6 +92,14 @@
                             <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Stream</p>
                             <p class="text-slate-400 text-sm break-all" id="sideStreamUrl">—</p>
                         </div>
+                        {% if mode == 'pi' %}
+                        <div id="sideDroneCoords" class="hidden border-t border-slate-800/80 pt-4 mt-2">
+                            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Drone position</p>
+                            <p class="text-slate-200 font-mono text-sm" id="sideCoordsLat">—</p>
+                            <p class="text-slate-200 font-mono text-sm" id="sideCoordsLng">—</p>
+                            <p class="text-amber-400/80 text-xs mt-1">Updating live</p>
+                        </div>
+                        {% endif %}
                         <div id="sideDetectionInfo" class="hidden">
                             <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Detection</p>
                             <p class="text-slate-200 text-sm">Humans & damaged buildings (YOLOv9)</p>
@@ -89,6 +109,48 @@
             </aside>
 
             <!-- Main content -->
+            {% if mode == 'pi' %}
+            <main class="flex-1 flex flex-col min-h-0 relative">
+                <div id="piMainMap" class="absolute inset-0"></div>
+                <div class="pi-map-overlay p-4 sm:p-6 lg:p-8">
+                    <div class="hidden bg-red-500/10 border border-red-500/30 text-red-300 p-4 rounded-xl mb-4 max-w-md" id="errorMessage"></div>
+                    <div class="hidden bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 p-4 rounded-xl mb-4 max-w-md" id="successMessage"></div>
+
+                    <div class="flex flex-col items-start justify-start gap-4 flex-shrink-0">
+                        <!-- Connect section: floating panel on map -->
+                        <section class="pi-panel rounded-xl p-6 sm:p-8 max-w-lg">
+                            <h3 class="text-lg font-semibold text-white mb-4">Connect to drone</h3>
+                            <p class="text-slate-400 text-sm mb-4">Enter your drone’s video stream IP and port (onboard unit or relay). See README-RASPBERRY-PI.md for hardware setup.</p>
+                            <div class="flex flex-col sm:flex-row gap-4 mb-4">
+                                <input type="text" id="ipAddress" class="flex-1 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="IP address (e.g. 192.168.1.100)" />
+                                <input type="text" id="portNumber" class="w-full sm:w-24 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Port" value="8080" />
+                            </div>
+                            <div class="flex flex-wrap gap-3">
+                                <button class="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors" id="startStreamBtn">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z"></path></svg>
+                                    Start stream
+                                </button>
+                                <button class="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-600 hover:bg-slate-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-xl transition-colors" id="stopStreamBtn" disabled>
+                                    Stop stream
+                                </button>
+                            </div>
+                            <p class="text-slate-500 text-sm mt-3" id="streamInfo"></p>
+                        </section>
+
+                        <!-- Live stream: floating panel when active -->
+                        <div class="hidden pi-panel rounded-xl overflow-hidden w-full max-w-4xl" id="liveStreamContainer">
+                            <h3 class="text-lg font-semibold text-white p-4 pb-0 flex items-center gap-2">
+                                <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                                Live feed
+                            </h3>
+                            <div class="p-4 bg-slate-800/80 rounded-b-xl text-center relative min-h-[420px] flex items-center justify-center">
+                                <img id="liveStream" src="" alt="Live stream" class="max-w-full max-h-[70vh] w-full object-contain mx-auto" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            {% else %}
             <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
                 <div class="max-w-4xl mx-auto">
                     <!-- Messages -->
@@ -118,17 +180,17 @@
                         </div>
                     </section>
                     {% else %}
-                    <!-- Connect section (Mobile or Pi) -->
+                    <!-- Connect section (Mobile or drone) -->
                     <section class="mb-8">
                         <h3 class="text-lg font-semibold text-white mb-4">
                             {% if mode == 'mobile' %}Connect DroidCam (same WiFi)
-                            {% else %}Connect Raspberry Pi stream
+                            {% else %}Connect to drone stream
                             {% endif %}
                         </h3>
                         <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-6 sm:p-8">
                             <p class="text-slate-400 text-sm mb-4">
                                 {% if mode == 'mobile' %}Enter the IP and port shown in the DroidCam app.
-                                {% else %}Enter your Pi IP and port. See README-RASPBERRY-PI.md for setup.
+                                {% else %}Enter your drone stream IP and port. See README-RASPBERRY-PI.md for setup.
                                 {% endif %}
                             </p>
                             <div class="flex flex-col sm:flex-row gap-4 mb-4">
@@ -169,15 +231,19 @@
                             <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
                             Live stream
                         </h3>
-                        <div class="bg-black rounded-xl overflow-hidden text-center">
+                        <div class="bg-slate-800/80 rounded-xl overflow-hidden text-center relative min-h-[320px] flex items-center justify-center">
                             <img id="liveStream" src="" alt="Live stream" class="max-w-full max-h-[70vh] mx-auto" />
                         </div>
                     </div>
                 </div>
             </main>
+            {% endif %}
         </div>
     </div>
 
+    {% if mode == 'pi' %}
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    {% endif %}
     <script>
         const mode = '{{ mode }}';
         const errorMessage = document.getElementById('errorMessage');
@@ -294,6 +360,74 @@
         const streamInfo = document.getElementById('streamInfo');
         let currentStreamUrl = null;
 
+        // Full-screen map (drone workspace only)
+        let piMainMap = null;
+        let piDroneMarker = null;
+        if (mode === 'pi' && typeof L !== 'undefined') {
+            piMainMap = L.map('piMainMap', { zoomControl: false, scrollWheelZoom: false, doubleClickZoom: false }).setView([37.7749, -122.4194], 12);
+            piMainMap.dragging.disable();
+            piMainMap.touchZoom.disable();
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '', maxZoom: 19 }).addTo(piMainMap);
+        }
+
+        // Drone coordinates: simulate movement while stream is active
+        let coordsInterval = null;
+        let droneLat = 37.7749;
+        let droneLng = -122.4194;
+
+        function startDroneCoords() {
+            if (mode !== 'pi') return;
+            const headerCoords = document.getElementById('headerCoords');
+            const sideDroneCoords = document.getElementById('sideDroneCoords');
+            const sideCoordsLat = document.getElementById('sideCoordsLat');
+            const sideCoordsLng = document.getElementById('sideCoordsLng');
+            if (!headerCoords || !sideDroneCoords) return;
+
+            if (coordsInterval) clearInterval(coordsInterval);
+            droneLat = 37.7749 + (Math.random() - 0.5) * 0.01;
+            droneLng = -122.4194 + (Math.random() - 0.5) * 0.01;
+
+            function updateCoords() {
+                droneLat += (Math.random() - 0.5) * 0.00015;
+                droneLng += (Math.random() - 0.5) * 0.00015;
+                const latStr = droneLat.toFixed(6);
+                const lngStr = droneLng.toFixed(6);
+                headerCoords.textContent = 'Lat: ' + latStr + ', Lng: ' + lngStr;
+                headerCoords.classList.remove('hidden');
+                if (sideCoordsLat) sideCoordsLat.textContent = 'Lat  ' + latStr;
+                if (sideCoordsLng) sideCoordsLng.textContent = 'Lng  ' + lngStr;
+                sideDroneCoords.classList.remove('hidden');
+                if (piMainMap) {
+                    if (!piDroneMarker) {
+                        piDroneMarker = L.marker([droneLat, droneLng], {
+                            icon: L.divIcon({ className: 'pi-drone-marker', html: '<div style="width:14px;height:14px;background:#06b6d4;border:2px solid #fff;border-radius:50%;box-shadow:0 0 10px #06b6d4;"></div>' })
+                        }).addTo(piMainMap);
+                    }
+                    piDroneMarker.setLatLng([droneLat, droneLng]);
+                }
+            }
+            updateCoords();
+            coordsInterval = setInterval(updateCoords, 1500);
+        }
+
+        function stopDroneCoords() {
+            if (coordsInterval) {
+                clearInterval(coordsInterval);
+                coordsInterval = null;
+            }
+            if (piMainMap && piDroneMarker) {
+                piMainMap.removeLayer(piDroneMarker);
+                piDroneMarker = null;
+            }
+            const headerCoords = document.getElementById('headerCoords');
+            const sideDroneCoords = document.getElementById('sideDroneCoords');
+            if (headerCoords) {
+                headerCoords.classList.add('hidden');
+                headerCoords.textContent = '—';
+            }
+            if (sideDroneCoords) sideDroneCoords.classList.add('hidden');
+        }
+
         function setStreamActive(active) {
             startStreamBtn.disabled = active;
             stopStreamBtn.disabled = !active;
@@ -305,7 +439,9 @@
                 sideStreamUrl.textContent = currentStreamUrl || '—';
                 sideDetectionInfo.classList.remove('hidden');
                 setStatus('live', 'Live');
+                if (mode === 'pi') startDroneCoords();
             } else {
+                if (mode === 'pi') stopDroneCoords();
                 liveStreamContainer.classList.add('hidden');
                 liveStream.src = '';
                 streamInfo.textContent = '';
