@@ -59,7 +59,7 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 model = None
 # Damage/building detection model (trained custom model - best.pt)
 damage_model = None
-DAMAGE_MODEL_PATH = os.environ.get('DAMAGE_MODEL_PATH', 'best.pt')
+DAMAGE_MODEL_PATH = os.environ.get('DAMAGE_MODEL_PATH', 'vbest.pt')
 
 # Live streaming variables
 streaming_active = False
@@ -97,46 +97,86 @@ def load_damage_model():
             print(f"Warning: Could not load damage model from {DAMAGE_MODEL_PATH}: {e}")
     return damage_model
 
+def _draw_box(frame, x1, y1, x2, y2, color, label):
+    """Draw a bounding box with a filled label background on frame."""
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), (x1 + label_size[0], y1), color, -1)
+    text_color = (0, 0, 0) if color == (0, 255, 0) else (255, 255, 255)
+    cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+
+
 def run_detection_and_draw(frame, conf_threshold=0.25):
-    """Run person + damage detection and draw boxes on frame. Returns annotated frame."""
+    """Run person + damage detection (no tracking) for live streaming.
+    Returns (annotated_frame, person_count, building_count) where counts are per-frame."""
     person_model = load_model()
     annotated = frame.copy()
+    person_count = 0
+    building_count = 0
 
     # 1) Person detection (class 0 = person in COCO)
-    person_results = person_model(frame, verbose=False)
-    for result in person_results:
+    for result in person_model(frame, verbose=False):
         for box in result.boxes:
-            cls = int(box.cls[0])
-            conf = float(box.conf[0])
-            if cls == 0 and conf >= conf_threshold:
+            if int(box.cls[0]) == 0 and float(box.conf[0]) >= conf_threshold:
+                person_count += 1
                 x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
-                color = (0, 255, 0)  # green
-                label = f'Person {conf:.2f}'
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(annotated, (x1, y1 - label_size[1] - 10),
-                              (x1 + label_size[0], y1), color, -1)
-                cv2.putText(annotated, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+                _draw_box(annotated, x1, y1, x2, y2, (0, 255, 0), f'Person {float(box.conf[0]):.2f}')
 
     # 2) Damage detection (custom model: class 0 = damaged_building)
     dm = load_damage_model()
     if dm is not None:
-        damage_results = dm(frame, verbose=False, conf=conf_threshold)
-        for result in damage_results:
+        for result in dm(frame, verbose=False, conf=conf_threshold):
+            for box in result.boxes:
+                conf = float(box.conf[0])
+                if conf >= conf_threshold:
+                    building_count += 1
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                    _draw_box(annotated, x1, y1, x2, y2, (0, 0, 255), f'Damaged building {conf:.2f}')
+
+    return annotated, person_count, building_count
+
+
+def run_detection_and_draw_tracked(frame, person_model, dm, conf_threshold=0.25):
+    """Run person + damage detection with object tracking for video processing.
+    Returns (annotated_frame, person_track_ids_this_frame, building_track_ids_this_frame).
+    Track IDs are unique per object across the whole video — collect into sets to count uniques."""
+    annotated = frame.copy()
+    person_ids = set()
+    building_ids = set()
+
+    # 1) Person detection with tracking (persist=True keeps tracker state across frames)
+    for result in person_model.track(frame, verbose=False, persist=True, classes=[0]):
+        if result.boxes is None:
+            continue
+        for box in result.boxes:
+            if int(box.cls[0]) != 0 or float(box.conf[0]) < conf_threshold:
+                continue
+            track_id = int(box.id[0]) if box.id is not None else None
+            if track_id is not None:
+                person_ids.add(track_id)
+            x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+            id_tag = f' #{track_id}' if track_id is not None else ''
+            _draw_box(annotated, x1, y1, x2, y2, (0, 255, 0),
+                      f'Person {float(box.conf[0]):.2f}{id_tag}')
+
+    # 2) Building detection with tracking
+    if dm is not None:
+        for result in dm.track(frame, verbose=False, persist=True, conf=conf_threshold):
+            if result.boxes is None:
+                continue
             for box in result.boxes:
                 conf = float(box.conf[0])
                 if conf < conf_threshold:
                     continue
+                track_id = int(box.id[0]) if box.id is not None else None
+                if track_id is not None:
+                    building_ids.add(track_id)
                 x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
-                color = (0, 0, 255)  # red for damage
-                label = f'Damaged building {conf:.2f}'
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-                label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                cv2.rectangle(annotated, (x1, y1 - label_size[1] - 10),
-                              (x1 + label_size[0], y1), color, -1)
-                cv2.putText(annotated, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                id_tag = f' #{track_id}' if track_id is not None else ''
+                _draw_box(annotated, x1, y1, x2, y2, (0, 0, 255),
+                          f'Damaged building {conf:.2f}{id_tag}')
 
-    return annotated
+    return annotated, person_ids, building_ids
 
 def reencode_video_for_browser(input_path, output_path):
     """Re-encode video using ffmpeg for browser compatibility"""
@@ -200,7 +240,19 @@ def process_video(input_path, output_path):
         raise ValueError("Failed to initialize video writer with any codec")
 
     frame_count = 0
+    # Use sets to count unique tracked objects across the entire video,
+    # so the same person/building seen in multiple frames is only counted once.
+    unique_person_ids = set()
+    unique_building_ids = set()
     print("[Detection] Starting video processing — detecting humans & damaged buildings...")
+
+    # Reset tracker state from any previous run
+    person_model = load_model()
+    dm = load_damage_model()
+    if hasattr(person_model, 'predictor') and person_model.predictor is not None:
+        person_model.predictor = None
+    if dm is not None and hasattr(dm, 'predictor') and dm.predictor is not None:
+        dm.predictor = None
 
     try:
         while True:
@@ -208,17 +260,29 @@ def process_video(input_path, output_path):
             if not ret:
                 break
 
-            annotated_frame = run_detection_and_draw(frame, conf_threshold=0.25)
-            out.write(annotated_frame)
+            annotated_frame, frame_person_ids, frame_building_ids = run_detection_and_draw_tracked(
+                frame, person_model, dm, conf_threshold=0.25
+            )
+            unique_person_ids.update(frame_person_ids)
+            unique_building_ids.update(frame_building_ids)
+
+            # Ensure contiguous uint8 BGR for VideoWriter (avoids OpenCV "Bad argument" on some systems)
+            if annotated_frame.dtype != np.uint8:
+                annotated_frame = np.clip(annotated_frame, 0, 255).astype(np.uint8)
+            if len(annotated_frame.shape) == 2:
+                annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_GRAY2BGR)
+            out.write(np.ascontiguousarray(annotated_frame))
             frame_count += 1
             if frame_count % 30 == 0 or frame_count == 1:
-                print(f"  [Detection] Frame {frame_count}: detecting...")
+                print(f"  [Detection] Frame {frame_count}: persons so far={len(unique_person_ids)}, buildings so far={len(unique_building_ids)}")
 
     finally:
         cap.release()
         out.release()
-    
-    print(f"[Detection] Finished — {frame_count} frames processed.")
+
+    total_persons = len(unique_person_ids)
+    total_buildings = len(unique_building_ids)
+    print(f"[Detection] Finished — {frame_count} frames processed. Unique persons: {total_persons}, unique buildings: {total_buildings}.")
 
     # Re-encode with ffmpeg for better browser compatibility if available
     if reencode_video_for_browser(temp_output, output_path):
@@ -234,11 +298,12 @@ def process_video(input_path, output_path):
             os.rename(temp_output, output_path)
         print(f"Video encoded with {codec_used} codec")
     
-    return frame_count
+    return frame_count, total_persons, total_buildings
 
 def process_frame_for_streaming(frame):
-    """Process a single frame for live streaming (person + damaged building)."""
-    return run_detection_and_draw(frame, conf_threshold=0.25)
+    """Process a single frame for live streaming (person + damaged building). Returns annotated frame only."""
+    annotated, _, _ = run_detection_and_draw(frame, conf_threshold=0.25)
+    return annotated
 
 def generate_frames():
     """Generator function for MJPEG streaming"""
@@ -486,12 +551,14 @@ def upload_video():
         try:
             print(f"[Detection] Video uploaded: {filename} — starting detection...")
             # Process video
-            frame_count = process_video(input_path, output_path)
+            frame_count, total_persons, total_buildings = process_video(input_path, output_path)
             
             return jsonify({
                 'success': True,
                 'output_file': output_filename,
-                'frames_processed': frame_count
+                'frames_processed': frame_count,
+                'total_persons': total_persons,
+                'total_buildings': total_buildings
             })
         except Exception as e:
             return jsonify({'error': f'Error processing video: {str(e)}'}), 500
