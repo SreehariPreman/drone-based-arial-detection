@@ -244,7 +244,7 @@ def process_video(input_path, output_path):
     # so the same person/building seen in multiple frames is only counted once.
     unique_person_ids = set()
     unique_building_ids = set()
-    print("[Detection] Starting video processing — detecting humans & damaged buildings...")
+    print("[Upload] Starting video processing — detecting humans & damaged buildings...")
 
     # Reset tracker state from any previous run
     person_model = load_model()
@@ -274,7 +274,7 @@ def process_video(input_path, output_path):
             out.write(np.ascontiguousarray(annotated_frame))
             frame_count += 1
             if frame_count % 30 == 0 or frame_count == 1:
-                print(f"  [Detection] Frame {frame_count}: persons so far={len(unique_person_ids)}, buildings so far={len(unique_building_ids)}")
+                print(f"  [Upload] Frame {frame_count} — persons so far: {len(unique_person_ids)}, buildings so far: {len(unique_building_ids)}")
 
     finally:
         cap.release()
@@ -282,7 +282,7 @@ def process_video(input_path, output_path):
 
     total_persons = len(unique_person_ids)
     total_buildings = len(unique_building_ids)
-    print(f"[Detection] Finished — {frame_count} frames processed. Unique persons: {total_persons}, unique buildings: {total_buildings}.")
+    print(f"[Upload] Finished — {frame_count} frames | total persons: {total_persons} | total buildings: {total_buildings}")
 
     # Re-encode with ffmpeg for better browser compatibility if available
     if reencode_video_for_browser(temp_output, output_path):
@@ -346,7 +346,9 @@ def streaming_worker_mjpeg(url):
         bytes_data = b''
         mjpeg_frame_count = 0
         chunk_count = 0
-        _stream_log("[Detection] Live stream (MJPEG): detecting humans & damaged buildings...")
+        stream_total_persons = 0
+        stream_total_buildings = 0
+        _stream_log("[Live stream] MJPEG: detection started — showing live counts (persons / buildings)...")
         for chunk in response.iter_content(chunk_size=8192):
             if not streaming_active:
                 _stream_log("streaming_worker_mjpeg: streaming_active=False, exiting")
@@ -371,10 +373,15 @@ def streaming_worker_mjpeg(url):
                     try:
                         img = Image.open(BytesIO(jpeg_data))
                         frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                        processed_frame = process_frame_for_streaming(frame)
+                        processed_frame, person_count, building_count = run_detection_and_draw(frame, conf_threshold=0.25)
+                        stream_total_persons += person_count
+                        stream_total_buildings += building_count
                         mjpeg_frame_count += 1
                         if mjpeg_frame_count <= 3 or mjpeg_frame_count % 90 == 0:
                             _stream_log("MJPEG frame %s processed, updating frame_buffer" % mjpeg_frame_count)
+                        if mjpeg_frame_count == 1 or mjpeg_frame_count % 30 == 0:
+                            ts = time.strftime("%H:%M:%S", time.localtime())
+                            print(f"  [{ts}] [Live stream] Frame {mjpeg_frame_count} — this frame: persons={person_count}, buildings={building_count} | session total: persons={stream_total_persons}, buildings={stream_total_buildings}", flush=True)
                         with frame_lock:
                             frame_buffer = processed_frame
                     except Exception as e:
@@ -488,23 +495,27 @@ def streaming_worker(ip_address, port):
         else:
             # Use OpenCV VideoCapture
             stream_frame_count = 0
+            stream_total_persons = 0
+            stream_total_buildings = 0
+            print("[Live stream] Detection started — showing live counts (persons / buildings)...")
             while streaming_active:
                 ret, frame = cap.read()
                 if not ret:
                     print("Failed to read frame from stream")
                     time.sleep(0.1)
                     continue
-                
-                # Process frame with YOLOv9
-                processed_frame = process_frame_for_streaming(frame)
-                stream_frame_count += 1
-                if stream_frame_count % 90 == 0 or stream_frame_count == 1:
-                    print(f"  [Detection] Live stream frame {stream_frame_count}: detecting...")
-                
-                # Update frame buffer
+
+                annotated_frame, person_count, building_count = run_detection_and_draw(frame, conf_threshold=0.25)
+                stream_total_persons += person_count
+                stream_total_buildings += building_count
+
                 with frame_lock:
-                    frame_buffer = processed_frame
-                
+                    frame_buffer = annotated_frame
+
+                stream_frame_count += 1
+                if stream_frame_count == 1 or stream_frame_count % 30 == 0:
+                    print(f"  [Live stream] Frame {stream_frame_count} — this frame: persons={person_count}, buildings={building_count} | session total: persons={stream_total_persons}, buildings={stream_total_buildings}")
+
                 time.sleep(0.033)  # ~30 FPS
     except Exception as e:
         print(f"Error in streaming worker: {e}")
@@ -549,7 +560,7 @@ def upload_video():
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         
         try:
-            print(f"[Detection] Video uploaded: {filename} — starting detection...")
+            print(f"[Upload] Video uploaded: {filename} — starting detection...")
             # Process video
             frame_count, total_persons, total_buildings = process_video(input_path, output_path)
             
