@@ -1,9 +1,18 @@
 import os
+import sys
 import cv2
 import numpy as np
 from flask import Flask, render_template, request, jsonify, send_file, Response
 from werkzeug.utils import secure_filename
 import torch
+
+# Debug logging for Pi/stream connection (set to True for verbose stream debug)
+STREAM_DEBUG = True
+def _stream_log(msg):
+    if STREAM_DEBUG:
+        import time
+        ts = time.strftime("%H:%M:%S", time.localtime())
+        print(f"[{ts}] [Stream] {msg}", flush=True)
 import torch.serialization
 import threading
 import time
@@ -234,166 +243,178 @@ def process_frame_for_streaming(frame):
 def generate_frames():
     """Generator function for MJPEG streaming"""
     global frame_buffer, frame_lock
-    
+    _stream_log("generate_frames: started (streaming_active=%s)" % streaming_active)
+    yielded = 0
+    no_buffer_count = 0
     while streaming_active:
         with frame_lock:
             if frame_buffer is not None:
-                # Encode frame as JPEG
+                no_buffer_count = 0
                 ret, buffer = cv2.imencode('.jpg', frame_buffer, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 if ret:
                     frame_bytes = buffer.tobytes()
+                    yielded += 1
+                    if yielded <= 3 or yielded % 100 == 0:
+                        _stream_log("generate_frames: yielding frame #%s (%s bytes)" % (yielded, len(frame_bytes)))
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            else:
+                no_buffer_count += 1
+                if no_buffer_count <= 5 or no_buffer_count % 50 == 0:
+                    _stream_log("generate_frames: no frame_buffer yet (count=%s)" % no_buffer_count)
         time.sleep(0.033)  # ~30 FPS
+    _stream_log("generate_frames: ended (streaming_active=False, yielded %s frames)" % yielded)
 
 def streaming_worker_mjpeg(url):
     """Worker thread for MJPEG streaming using requests library"""
     global streaming_active, frame_buffer, frame_lock, current_stream_url
-    
+
+    _stream_log("streaming_worker_mjpeg: connecting to %s" % url)
     try:
         response = requests.get(url, stream=True, timeout=10)
+        _stream_log("streaming_worker_mjpeg: response status=%s headers=%s" % (
+            response.status_code, dict(response.headers)))
         if response.status_code != 200:
-            print(f"HTTP error: {response.status_code}")
+            _stream_log("HTTP error: %s" % response.status_code)
             return False
-        
+
         bytes_data = b''
         mjpeg_frame_count = 0
-        print("[Detection] Live stream (MJPEG): detecting humans & damaged buildings...")
+        chunk_count = 0
+        _stream_log("[Detection] Live stream (MJPEG): detecting humans & damaged buildings...")
         for chunk in response.iter_content(chunk_size=8192):
             if not streaming_active:
+                _stream_log("streaming_worker_mjpeg: streaming_active=False, exiting")
                 break
-            
-            bytes_data += chunk
-            
+            chunk_count += 1
+            if chunk_count <= 5 or chunk_count % 200 == 0:
+                _stream_log("Chunk #%s received, size=%s bytes, total buffer=%s" % (
+                    chunk_count, len(chunk) if chunk else 0, len(bytes_data) + (len(chunk) if chunk else 0)))
+            if chunk:
+                bytes_data += chunk
+
             # Look for JPEG frame markers
             while b'\xff\xd8' in bytes_data:
                 start = bytes_data.find(b'\xff\xd8')
-                # Find the end of this JPEG frame
                 end_marker = bytes_data.find(b'\xff\xd9', start)
-                
+
                 if end_marker != -1:
-                    # Complete JPEG frame found
                     jpeg_data = bytes_data[start:end_marker + 2]
-                    bytes_data = bytes_data[end_marker + 2:]  # Remove processed data
-                    
+                    bytes_data = bytes_data[end_marker + 2:]
+                    if mjpeg_frame_count < 3:
+                        _stream_log("Complete JPEG frame #%s size=%s bytes" % (mjpeg_frame_count + 1, len(jpeg_data)))
                     try:
-                        # Convert JPEG bytes to OpenCV image
                         img = Image.open(BytesIO(jpeg_data))
                         frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-                        
-                        # Process frame with YOLOv9
                         processed_frame = process_frame_for_streaming(frame)
                         mjpeg_frame_count += 1
-                        if mjpeg_frame_count % 90 == 0 or mjpeg_frame_count == 1:
-                            print(f"  [Detection] Live stream frame {mjpeg_frame_count}: detecting...")
-                        
-                        # Update frame buffer
+                        if mjpeg_frame_count <= 3 or mjpeg_frame_count % 90 == 0:
+                            _stream_log("MJPEG frame %s processed, updating frame_buffer" % mjpeg_frame_count)
                         with frame_lock:
                             frame_buffer = processed_frame
                     except Exception as e:
-                        print(f"Error processing MJPEG frame: {e}")
+                        _stream_log("Error processing MJPEG frame: %s" % e)
                         continue
                 else:
-                    # Incomplete frame, wait for more data
                     break
-                    
+
+        _stream_log("streaming_worker_mjpeg: loop ended (chunks=%s, frames=%s)" % (chunk_count, mjpeg_frame_count))
+
     except requests.exceptions.RequestException as e:
-        print(f"Request error: {e}")
+        _stream_log("Request error: %s" % e)
         return False
     except Exception as e:
-        print(f"Error in MJPEG stream: {e}")
+        _stream_log("Error in MJPEG stream: %s" % e)
+        import traceback
+        traceback.print_exc()
         return False
-    
+
     return True
 
 def streaming_worker(ip_address, port):
     """Worker thread for processing live stream"""
     global streaming_active, stream_cap, frame_buffer, frame_lock, current_stream_url
-    
-    # Try different URL formats for DroidCam
-    # DroidCam supports multiple formats - try /video first as it's the MJPEG endpoint
+
+    _stream_log("streaming_worker: ip=%s port=%s" % (ip_address, port))
     url_formats = [
-        f"http://{ip_address}:{port}/video",   # DroidCam / Pi stream (MJPEG)
-        f"http://{ip_address}:{port}/stream", # Pi stream alternative path
-        f"http://{ip_address}:{port}/",       # Root URL (may serve MJPEG)
-        f"http://{ip_address}:{port}/mjpegfeed?640x480",
-        f"http://{ip_address}:{port}/mjpegfeed",
+        "http://%s:%s/video" % (ip_address, port),
+        "http://%s:%s/stream" % (ip_address, port),
+        "http://%s:%s/" % (ip_address, port),
+        "http://%s:%s/mjpegfeed?640x480" % (ip_address, port),
+        "http://%s:%s/mjpegfeed" % (ip_address, port),
     ]
-    
-    # Try OpenCV VideoCapture first
+    _stream_log("URLs to try: %s" % url_formats)
+
     cap = None
     connected_url = None
     use_requests = False
-    
-    print("Attempting connection with OpenCV VideoCapture...")
+
+    _stream_log("Attempting connection with OpenCV VideoCapture...")
     for url in url_formats:
         try:
-            print(f"Trying OpenCV: {url}")
-            # Try different backends
+            _stream_log("Trying OpenCV: %s" % url)
             for backend in [cv2.CAP_ANY, cv2.CAP_FFMPEG]:
                 try:
                     cap = cv2.VideoCapture(url, backend)
                     if cap.isOpened():
-                        # Give it a moment to connect
                         time.sleep(0.5)
                         ret, test_frame = cap.read()
+                        _stream_log("OpenCV read() ret=%s frame=%s" % (ret, "ok" if (test_frame is not None and test_frame.size > 0) else "empty"))
                         if ret and test_frame is not None and test_frame.size > 0:
                             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
                             cap.set(cv2.CAP_PROP_FPS, 30)
-                            print(f"✓ Successfully connected with OpenCV: {url}")
+                            _stream_log("Successfully connected with OpenCV: %s" % url)
                             connected_url = url
                             current_stream_url = url
                             break
                         else:
                             cap.release()
                             cap = None
-                except:
+                except Exception as be:
+                    _stream_log("OpenCV backend error: %s" % be)
                     if cap:
                         cap.release()
                         cap = None
                     continue
-            
+
             if cap and cap.isOpened():
                 break
         except Exception as e:
-            print(f"✗ OpenCV failed for {url}: {e}")
+            _stream_log("OpenCV failed for %s: %s" % (url, e))
             if cap:
                 try:
                     cap.release()
-                except:
+                except Exception:
                     pass
                 cap = None
             continue
-    
-    # If OpenCV failed, try requests library for MJPEG
+
     if cap is None or not cap.isOpened():
-        print("\nOpenCV failed, trying requests library for MJPEG stream...")
+        _stream_log("OpenCV failed, trying requests library for MJPEG stream...")
         for url in url_formats:
-            print(f"Trying requests MJPEG: {url}")
-            # Test if URL is accessible
+            _stream_log("Trying requests MJPEG: %s" % url)
             try:
                 test_response = requests.get(url, stream=True, timeout=3)
+                _stream_log("requests.get %s -> status=%s Content-Type=%s" % (
+                    url, test_response.status_code, test_response.headers.get("Content-Type")))
                 if test_response.status_code == 200:
-                    print(f"✓ URL is accessible, starting MJPEG stream: {url}")
+                    _stream_log("URL is accessible (200), starting MJPEG stream: %s" % url)
                     connected_url = url
                     current_stream_url = url
                     use_requests = True
                     break
             except Exception as e:
-                print(f"✗ Cannot access {url}: {e}")
+                _stream_log("Cannot access %s: %s" % (url, e))
                 continue
-    
+
     if not use_requests and (cap is None or not cap.isOpened()):
-        print("\n✗ Failed to connect to stream. Please check:")
-        print("1. DroidCam is running on your phone")
-        print("2. Both devices are on the same WiFi network")
-        print("3. IP address and port are correct")
-        print("4. Try accessing the URL in a browser: http://" + ip_address + ":" + port + "/video")
+        _stream_log("Failed to connect to stream. Check IP, port, and that Pi stream is running.")
+        _stream_log("Try in browser: http://%s:%s/video" % (ip_address, port))
         streaming_active = False
         return
-    
+
     stream_cap = cap if not use_requests else "requests"
-    print("[Detection] Live stream: detecting humans & damaged buildings...")
+    _stream_log("Using %s for stream; connected_url=%s" % ("requests (MJPEG)" if use_requests else "OpenCV", connected_url))
 
     try:
         if use_requests:
@@ -493,44 +514,47 @@ def get_output_video(filename):
 def start_stream():
     """Start live streaming from IP camera"""
     global streaming_active, streaming_thread, current_stream_url
-    
+
+    _stream_log("start_stream: called")
     if streaming_active:
+        _stream_log("start_stream: already active, rejecting")
         return jsonify({'error': 'Streaming is already active'}), 400
-    
+
     data = request.get_json()
     if not data or 'ip_address' not in data:
+        _stream_log("start_stream: missing ip_address")
         return jsonify({'error': 'IP address is required'}), 400
-    
+
     ip_address = data['ip_address'].strip()
-    port = data.get('port', '4747')  # DroidCam default port
-    
-    # Remove http:// or https:// if user included it
+    port = str(data.get('port', '4747'))
+    _stream_log("start_stream: ip_address=%s port=%s" % (ip_address, port))
+
     if ip_address.startswith('http://') or ip_address.startswith('https://'):
-        # Extract IP from URL if user provided full URL
         try:
             from urllib.parse import urlparse
             parsed = urlparse(ip_address)
             ip_address = parsed.hostname or ip_address.replace('http://', '').replace('https://', '').split('/')[0]
             if parsed.port:
                 port = str(parsed.port)
-        except:
+        except Exception:
             ip_address = ip_address.replace('http://', '').replace('https://', '').split('/')[0]
-    
-    # Construct stream URL for display
-    stream_url = f"http://{ip_address}:{port}/video"
+
+    stream_url = "http://%s:%s/video" % (ip_address, port)
     current_stream_url = stream_url
     streaming_active = True
-    
-    # Start streaming thread with IP and port separately
+    _stream_log("start_stream: starting streaming_worker thread for %s:%s" % (ip_address, port))
+
     streaming_thread = threading.Thread(target=streaming_worker, args=(ip_address, port), daemon=True)
     streaming_thread.start()
-    
-    # Wait a bit to see if connection succeeds
+
     time.sleep(2)
-    
+    _stream_log("start_stream: after 2s wait, streaming_active=%s" % streaming_active)
+
     if not streaming_active:
+        _stream_log("start_stream: connection failed (streaming_active=False)")
         return jsonify({'error': 'Failed to connect to camera. Check IP address and ensure DroidCam is running.'}), 500
-    
+
+    _stream_log("start_stream: success, stream_url=%s" % stream_url)
     return jsonify({
         'success': True,
         'message': 'Streaming started',
@@ -541,16 +565,18 @@ def start_stream():
 def stop_stream():
     """Stop live streaming"""
     global streaming_active, stream_cap
-    
+
+    _stream_log("stop_stream: called (streaming_active=%s)" % streaming_active)
     if not streaming_active:
         return jsonify({'error': 'No active stream'}), 400
-    
+
     streaming_active = False
-    
-    if stream_cap:
-        stream_cap.release()
-        stream_cap = None
-    
+    if stream_cap and hasattr(stream_cap, 'release'):
+        try:
+            stream_cap.release()
+        except Exception as e:
+            _stream_log("stop_stream: release error: %s" % e)
+    stream_cap = None
     return jsonify({'success': True, 'message': 'Streaming stopped'})
 
 @app.route('/stream/status', methods=['GET'])
@@ -564,9 +590,11 @@ def stream_status():
 @app.route('/video_feed')
 def video_feed():
     """MJPEG streaming endpoint"""
+    _stream_log("video_feed: request (streaming_active=%s)" % streaming_active)
     if not streaming_active:
+        _stream_log("video_feed: rejected (not active)")
         return jsonify({'error': 'Streaming is not active'}), 400
-    
+    _stream_log("video_feed: returning Response(generate_frames())")
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
