@@ -103,6 +103,10 @@
                         <div id="sideDetectionInfo" class="hidden">
                             <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">Detection</p>
                             <p class="text-slate-200 text-sm">Humans & damaged buildings (YOLOv9)</p>
+                            <div id="sideDetectionCounts" class="mt-3 space-y-2 hidden">
+                                <p class="text-slate-300 text-sm flex justify-between"><span>Person Detected</span><span class="font-semibold tabular-nums" id="sideCountPerson">0</span></p>
+                                <p class="text-slate-300 text-sm flex justify-between"><span>Building Detected</span><span class="font-semibold tabular-nums" id="sideCountBuilding">0</span></p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -120,7 +124,27 @@
                         <!-- Connect section: floating panel on map -->
                         <section class="pi-panel rounded-xl p-6 sm:p-8 max-w-lg">
                             <h3 class="text-lg font-semibold text-white mb-4">Connect to drone</h3>
-                            <p class="text-slate-400 text-sm mb-4">Enter your drone’s video stream IP and port (onboard unit or relay). See README-RASPBERRY-PI.md for hardware setup.</p>
+                            <p class="text-slate-400 text-sm mb-4">Choose the camera on your Pi, then enter the Pi’s IP and port. See README-RASPBERRY-PI.md for setup.</p>
+                            <!-- Camera source: Pi Cam or USB webcam -->
+                            <div class="mb-4">
+                                <p class="text-xs text-slate-500 uppercase tracking-wider mb-2">Camera on Pi</p>
+                                <div class="flex gap-3">
+                                    <label class="flex-1 cursor-pointer">
+                                        <input type="radio" name="cameraSource" value="picam" class="sr-only peer" checked />
+                                        <span class="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-slate-600 bg-slate-800/60 text-slate-300 peer-checked:border-amber-500 peer-checked:bg-amber-500/10 peer-checked:text-amber-400 transition-colors">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 13v4a2 2 0 01-2 2H7a2 2 0 01-2-2v-4"></path></svg>
+                                            Pi Camera
+                                        </span>
+                                    </label>
+                                    <label class="flex-1 cursor-pointer">
+                                        <input type="radio" name="cameraSource" value="webcam" class="sr-only peer" />
+                                        <span class="flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-slate-600 bg-slate-800/60 text-slate-300 peer-checked:border-amber-500 peer-checked:bg-amber-500/10 peer-checked:text-amber-400 transition-colors">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                                            USB webcam
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
                             <div class="flex flex-col sm:flex-row gap-4 mb-4">
                                 <input type="text" id="ipAddress" class="flex-1 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="IP address (e.g. 192.168.1.100)" />
                                 <input type="text" id="portNumber" class="w-full sm:w-24 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Port" value="8080" />
@@ -190,7 +214,7 @@
                         <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-6 sm:p-8">
                             <p class="text-slate-400 text-sm mb-4">
                                 {% if mode == 'mobile' %}Enter the IP and port shown in the DroidCam app.
-                                {% else %}Enter your drone stream IP and port. See README-RASPBERRY-PI.md for setup.
+                                {% else %}Enter your Pi’s IP and port. The Pi can use a Pi Camera Module or a USB webcam (auto-detected). See README-RASPBERRY-PI.md for setup.
                                 {% endif %}
                             </p>
                             <div class="flex flex-col sm:flex-row gap-4 mb-4">
@@ -337,6 +361,14 @@
                     sideFileName.textContent = selectedFile.name;
                     sideFrames.textContent = data.frames_processed + ' frames';
                     sideDetectionInfo.classList.remove('hidden');
+                    const sideDetectionCounts = document.getElementById('sideDetectionCounts');
+                    const sideCountPerson = document.getElementById('sideCountPerson');
+                    const sideCountBuilding = document.getElementById('sideCountBuilding');
+                    if (sideDetectionCounts && sideCountPerson && sideCountBuilding) {
+                        sideCountPerson.textContent = String(data.total_persons != null ? data.total_persons : 0);
+                        sideCountBuilding.textContent = String(data.total_buildings != null ? data.total_buildings : 0);
+                        sideDetectionCounts.classList.remove('hidden');
+                    }
                     setStatus('idle', 'Idle');
                 } else {
                     showError(data.error || 'Error processing video');

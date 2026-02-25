@@ -6,7 +6,9 @@ This guide explains how to run a video stream on your **Raspberry Pi** over WiFi
 
 - **Raspberry Pi** (3, 4, or 5) with Raspberry Pi OS (Bullseye or later)
 - **Same WiFi** for Pi and laptop
-- **Camera**: USB webcam **or** Raspberry Pi Camera Module (v2, v3, or HQ)
+- **Camera**: **USB webcam** or **Raspberry Pi Camera Module** (v2, v3, or HQ)
+
+With a **USB webcam**, the stream server automatically tries camera indices 0, 1, 2, … until one works — you don’t need to know the camera index. Just plug in the webcam and run the server.
 
 ---
 
@@ -36,6 +38,10 @@ sudo apt install -y python3-picamera2
 ```
 
 For a **USB webcam** you can skip this; the script will use OpenCV only.
+
+### 1.4 USB webcam: auto-detect (no index needed)
+
+If you use a **USB webcam**, plug it in and run the stream server. It will try camera indices 0, 1, 2, … until one opens and returns video. You do **not** need to pass a camera index. If both a Pi Camera Module and a USB webcam are connected, the server prefers the Pi Camera Module; to use **only** the USB webcam, run with `--webcam` (see section 5).
 
 ---
 
@@ -98,11 +104,15 @@ cd ~/raspberry_pi
 python3 stream_server.py
 ```
 
-Default port is **8080**. You should see something like:
+Default port is **8080**. The server will:
+- Use **Pi Camera Module** if available (and picamera2 is installed).
+- Otherwise use a **USB webcam**, trying indices 0, 1, 2, … until one works (no need to specify an index).
+
+You should see something like:
 
 ```
 Opening camera...
-Camera: opencv   (or: picamera2)
+Camera type: opencv (index=0)   # or: picamera2
 Stream server at http://<this-pi-ip>:8080/video
 On your laptop: enter Pi IP and port in the detection app, then Start Pi Stream.
 Press Ctrl+C to stop.
@@ -112,7 +122,9 @@ Press Ctrl+C to stop.
 
 ```bash
 python3 stream_server.py --port 8080 --width 640 --height 480
-python3 stream_server.py --port 9000   # use a different port
+python3 stream_server.py --port 9000                    # different port
+python3 stream_server.py --webcam                        # USB webcam only (skip Pi Camera), auto-detect index
+python3 stream_server.py --webcam --device 2             # try index 2 first, then 0,1,3,...
 ```
 
 Leave this terminal running while you use the stream from the laptop.
@@ -176,17 +188,19 @@ Stream URL: `http://<pi-ip>:8080/video`.
 ## Troubleshooting
 
 | Issue | What to try |
-|--------|--------------|
-| “No camera found” | USB: run `ls /dev/video*`. Pi Camera: enable in `raspi-config` and install `python3-picamera2`. |
+|--------|-------------|
+| “No camera found” | Pi Camera: enable in `raspi-config` and install `python3-picamera2`. USB: run `ls /dev/video*` to see devices; the server auto-tries indices 0–9. |
+| “No USB webcam found” | Ensure webcam is plugged in; run `ls /dev/video*`. Try `--device 1` or `--device 2` if the camera is not at index 0. |
 | “Failed to connect” on laptop | Pi and laptop on same WiFi; firewall on Pi allows port 8080: `sudo ufw allow 8080` (if using ufw). |
 | Port in use | Use another port: `python3 stream_server.py --port 9000` and enter that port in the app. |
 | Slow or choppy | Lower resolution: `--width 320 --height 240`. |
+| Prefer USB webcam over Pi Camera | Run with `--webcam` so the server skips Picamera2 and uses the USB webcam only. |
 
 ---
 
 ## Summary
 
-- **On the Pi:** install deps, run `python3 stream_server.py` (port 8080 by default).
-- **On the laptop:** open the detection app → “Live Stream from Raspberry Pi” → enter Pi IP and 8080 → “Start Pi Stream”.
+- **On the Pi:** Install deps, run `python3 stream_server.py` (port 8080 by default). Use **Pi Camera Module** or **USB webcam**; with USB webcam the server auto-detects the camera index (no need to pass it).
+- **On the laptop:** Open the detection app → “Live Stream from Raspberry Pi” (or “Connect to drone stream”) → enter Pi IP and 8080 → “Start stream”.
 
 Detection (humans & damaged buildings) is the same as for uploaded videos and mobile streaming.

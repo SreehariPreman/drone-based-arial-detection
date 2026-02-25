@@ -5,6 +5,10 @@ Streams camera video over WiFi so the laptop app can run human & damaged-buildin
 
 Usage on Pi:
   python3 stream_server.py [--port 8080] [--width 640] [--height 480]
+  python3 stream_server.py --webcam   # Use USB webcam only (auto-detect index)
+
+With a USB webcam connected, the server tries camera indices 0, 1, 2, ... until one
+streams successfully — no need to know the camera index.
 
 Then on your laptop: open the detection app, go to "Live Stream from Raspberry Pi",
 enter the Pi's IP and port (default 8080), click "Start Pi Stream".
@@ -39,10 +43,39 @@ except ImportError:
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 
-def get_camera(width=640, height=480, fps=20, device=0):
-    """Open camera: prefer Picamera2 (Pi Camera Module), fallback to OpenCV (USB)."""
-    _log("get_camera: opening camera (width=%s, height=%s, fps=%s, device=%s)" % (width, height, fps, device))
-    if HAS_PICAM2 and Picamera2:
+def try_opencv_camera(width=640, height=480, fps=20, max_indices=10, first_index=0):
+    """Try OpenCV VideoCapture on indices 0, 1, ... until one opens and returns a valid frame.
+    Returns (cap, index) or raises RuntimeError. Use first_index as the first index to try."""
+    order = [first_index] + [i for i in range(max_indices) if i != first_index]
+    for idx in order:
+        if idx >= max_indices:
+            continue
+        _log("Trying OpenCV VideoCapture(index=%s)..." % idx)
+        cap = cv2.VideoCapture(idx)
+        if not cap.isOpened():
+            _log("  index %s: failed to open" % idx)
+            cap.release()
+            continue
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        cap.set(cv2.CAP_PROP_FPS, fps)
+        ret, frame = cap.read()
+        if not ret or frame is None or frame.size == 0:
+            _log("  index %s: opened but read() returned no frame" % idx)
+            cap.release()
+            continue
+        _log("  index %s: opened and read frame OK (%sx%s)" % (idx, frame.shape[1], frame.shape[0]))
+        return (cap, idx)
+    raise RuntimeError(
+        "No USB webcam found. Tried indices 0..%s. Check that the webcam is connected (ls /dev/video*)." % (max_indices - 1)
+    )
+
+
+def get_camera(width=640, height=480, fps=20, device=0, webcam_only=False):
+    """Open camera: prefer Picamera2 (Pi Camera Module), fallback to OpenCV (USB webcam).
+    If webcam_only=True, skip Picamera2 and use USB webcam only, trying indices 0,1,... until one works."""
+    _log("get_camera: width=%s, height=%s, fps=%s, device=%s, webcam_only=%s" % (width, height, fps, device, webcam_only))
+    if not webcam_only and HAS_PICAM2 and Picamera2:
         try:
             _log("Trying Picamera2...")
             picam2 = Picamera2()
@@ -53,21 +86,14 @@ def get_camera(width=640, height=480, fps=20, device=0):
             picam2.configure(config)
             picam2.start()
             _log("Picamera2 opened successfully")
-            return ("picamera2", picam2)
+            return ("picamera2", picam2, None)
         except Exception as e:
-            _log("Picamera2 failed: %s, trying OpenCV..." % e)
+            _log("Picamera2 failed: %s, trying USB webcam..." % e)
     if HAS_CV2:
-        _log("Trying OpenCV VideoCapture(%s)..." % device)
-        cap = cv2.VideoCapture(device)
-        if cap.isOpened():
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            cap.set(cv2.CAP_PROP_FPS, fps)
-            _log("OpenCV camera (device=%s) opened successfully" % device)
-            return ("opencv", cap)
-        else:
-            _log("OpenCV VideoCapture(%s) failed to open" % device)
-    raise RuntimeError("No camera found. Install opencv-python and/or picamera2.")
+        cap, index = try_opencv_camera(width, height, fps, max_indices=10, first_index=device)
+        _log("OpenCV camera (index=%s) opened successfully" % index)
+        return ("opencv", cap, index)
+    raise RuntimeError("No camera found. Install opencv-python-headless (and optionally picamera2 for Pi Camera Module).")
 
 
 def read_frame(camera_type, camera):
@@ -172,7 +198,8 @@ def main():
     parser.add_argument("--width", type=int, default=640, help="Frame width")
     parser.add_argument("--height", type=int, default=480, help="Frame height")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
-    parser.add_argument("--device", type=int, default=0, help="OpenCV camera device index (default: 0, try 1 if no frame)")
+    parser.add_argument("--device", type=int, default=0, help="First camera index to try for USB webcam (default: 0)")
+    parser.add_argument("--webcam", action="store_true", help="Use USB webcam only (skip Pi Camera Module); auto-try indices 0,1,...")
     args = parser.parse_args()
 
     if not HAS_CV2:
@@ -180,8 +207,12 @@ def main():
         return 1
 
     _log("Opening camera...")
-    camera_type, camera = get_camera(args.width, args.height, device=args.device)
-    _log("Camera type: %s" % camera_type)
+    camera_type, camera, cam_index = get_camera(
+        args.width, args.height,
+        device=args.device,
+        webcam_only=args.webcam,
+    )
+    _log("Camera type: %s" % camera_type + (" (index=%s)" % cam_index if cam_index is not None else ""))
 
     # Warmup: verify we can read at least one frame before serving
     _log("Warmup: reading a few frames...")

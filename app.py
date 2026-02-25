@@ -59,7 +59,9 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 model = None
 # Damage/building detection model (trained custom model - best.pt)
 damage_model = None
-DAMAGE_MODEL_PATH = os.environ.get('DAMAGE_MODEL_PATH', 'vbest.pt')
+DAMAGE_MODEL_PATH = os.environ.get('DAMAGE_MODEL_PATH', 'best.pt')
+# Higher = fewer false positives for "damaged building". Tune if 100-epoch model over-detects.
+DAMAGE_CONF_THRESHOLD = '0.25'
 
 # Live streaming variables
 streaming_active = False
@@ -92,7 +94,7 @@ def load_damage_model():
     if damage_model is None and os.path.isfile(DAMAGE_MODEL_PATH):
         try:
             damage_model = YOLO(DAMAGE_MODEL_PATH)
-            print(f"Damage model loaded from {DAMAGE_MODEL_PATH}")
+            print(f"Damage model loaded from {DAMAGE_MODEL_PATH} (conf threshold={DAMAGE_CONF_THRESHOLD})")
         except Exception as e:
             print(f"Warning: Could not load damage model from {DAMAGE_MODEL_PATH}: {e}")
     return damage_model
@@ -106,9 +108,11 @@ def _draw_box(frame, x1, y1, x2, y2, color, label):
     cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
 
 
-def run_detection_and_draw(frame, conf_threshold=0.25):
+def run_detection_and_draw(frame, conf_threshold=0.25, damage_conf_threshold=None):
     """Run person + damage detection (no tracking) for live streaming.
     Returns (annotated_frame, person_count, building_count) where counts are per-frame."""
+    if damage_conf_threshold is None:
+        damage_conf_threshold = DAMAGE_CONF_THRESHOLD
     person_model = load_model()
     annotated = frame.copy()
     person_count = 0
@@ -125,10 +129,10 @@ def run_detection_and_draw(frame, conf_threshold=0.25):
     # 2) Damage detection (custom model: class 0 = damaged_building)
     dm = load_damage_model()
     if dm is not None:
-        for result in dm(frame, verbose=False, conf=conf_threshold):
+        for result in dm(frame, verbose=False, conf=damage_conf_threshold):
             for box in result.boxes:
                 conf = float(box.conf[0])
-                if conf >= conf_threshold:
+                if conf >= damage_conf_threshold:
                     building_count += 1
                     x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
                     _draw_box(annotated, x1, y1, x2, y2, (0, 0, 255), f'Damaged building {conf:.2f}')
@@ -136,10 +140,12 @@ def run_detection_and_draw(frame, conf_threshold=0.25):
     return annotated, person_count, building_count
 
 
-def run_detection_and_draw_tracked(frame, person_model, dm, conf_threshold=0.25):
+def run_detection_and_draw_tracked(frame, person_model, dm, conf_threshold=0.25, damage_conf_threshold=None):
     """Run person + damage detection with object tracking for video processing.
     Returns (annotated_frame, person_track_ids_this_frame, building_track_ids_this_frame).
     Track IDs are unique per object across the whole video — collect into sets to count uniques."""
+    if damage_conf_threshold is None:
+        damage_conf_threshold = DAMAGE_CONF_THRESHOLD
     annotated = frame.copy()
     person_ids = set()
     building_ids = set()
@@ -161,12 +167,12 @@ def run_detection_and_draw_tracked(frame, person_model, dm, conf_threshold=0.25)
 
     # 2) Building detection with tracking
     if dm is not None:
-        for result in dm.track(frame, verbose=False, persist=True, conf=conf_threshold):
+        for result in dm.track(frame, verbose=False, persist=True, conf=damage_conf_threshold):
             if result.boxes is None:
                 continue
             for box in result.boxes:
                 conf = float(box.conf[0])
-                if conf < conf_threshold:
+                if conf < damage_conf_threshold:
                     continue
                 track_id = int(box.id[0]) if box.id is not None else None
                 if track_id is not None:
